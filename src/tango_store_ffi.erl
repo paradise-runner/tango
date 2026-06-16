@@ -81,21 +81,54 @@ confirm(Prompt) ->
     end.
 
 run_command(Command, Args, Env, Cwd) ->
-    PortSettings0 = [
-        binary,
-        exit_status,
-        hide,
-        use_stdio,
-        stderr_to_stdout,
-        {args, [unicode:characters_to_list(Arg) || Arg <- Args]},
-        {env, [{unicode:characters_to_list(Key), unicode:characters_to_list(Val)} || {Key, Val} <- Env]}
-    ],
-    PortSettings = case Cwd of
-        none -> PortSettings0;
-        {some, Dir} -> [{cd, unicode:characters_to_list(Dir)} | PortSettings0]
-    end,
-    Port = open_port({spawn_executable, unicode:characters_to_list(Command)}, PortSettings),
-    collect_port(Port, []).
+    case resolve_executable(Command) of
+        {ok, Executable} ->
+            PortSettings0 = [
+                binary,
+                exit_status,
+                hide,
+                use_stdio,
+                stderr_to_stdout,
+                {args, [unicode:characters_to_list(Arg) || Arg <- Args]},
+                {env, [{unicode:characters_to_list(Key), unicode:characters_to_list(Val)} || {Key, Val} <- Env]}
+            ],
+            PortSettings = case Cwd of
+                none -> PortSettings0;
+                {some, Dir} -> [{cd, unicode:characters_to_list(Dir)} | PortSettings0]
+            end,
+            try
+                Port = open_port({spawn_executable, Executable}, PortSettings),
+                collect_port(Port, [])
+            catch
+                error:enoent -> {error, executable_not_found(Command)};
+                error:Reason -> {error, command_error(Command, Reason)}
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+resolve_executable(Command) ->
+    CommandList = unicode:characters_to_list(Command),
+    case lists:member($/, CommandList) of
+        true ->
+            {ok, CommandList};
+        false ->
+            case os:find_executable(CommandList) of
+                false -> {error, executable_not_found(Command)};
+                Path -> {ok, Path}
+            end
+    end.
+
+executable_not_found(Command) ->
+    iolist_to_binary([<<"executable not found: ">>, Command]).
+
+command_error(Command, Reason) ->
+    iolist_to_binary(
+        io_lib:format(
+            "failed to run ~ts: ~p",
+            [unicode:characters_to_list(Command), Reason]
+        )
+    ).
 
 atomic_replace(Path, Contents) ->
     case ensure_parent(Path) of

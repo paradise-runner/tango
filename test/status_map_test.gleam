@@ -87,7 +87,7 @@ pub fn validate_marks_complete_github_mapping_validated_test() {
   |> should.be_true()
 }
 
-pub fn validate_rejects_missing_configured_status_id_test() {
+pub fn validate_reports_all_missing_configured_status_ids_test() {
   let operator_config =
     config.Config(
       ..config.defaults("/tmp/tango", None),
@@ -111,13 +111,167 @@ pub fn validate_rejects_missing_configured_status_id_test() {
     fn(_, _) {
       Ok(process.CommandResult(
         exit_code: 0,
-        output: "[{\"name\":\"status-backlog\"},{\"name\":\"status-todo\"},{\"name\":\"status-active\"},{\"name\":\"status-review\"},{\"name\":\"status-blocked\"},{\"name\":\"status-done\"}]",
+        output: "[{\"name\":\"status-backlog\"},{\"name\":\"status-todo\"},{\"name\":\"status-active\"},{\"name\":\"status-review\"}]",
       ))
     },
   )
   |> should.equal(
-    Error(status_map.MissingMappedStatus("wont_do", "status-canceled")),
+    Error(
+      status_map.MissingMappedStatuses([
+        #("blocked", "status-blocked"),
+        #("done", "status-done"),
+        #("wont_do", "status-canceled"),
+      ]),
+    ),
   )
+}
+
+pub fn validate_reports_all_missing_required_roles_test() {
+  let operator_config =
+    config.Config(
+      ..config.defaults("/tmp/tango", None),
+      registries: dict.from_list([
+        #(
+          "github",
+          config.RegistryConfig(
+            cli: "gh",
+            skill: "github-ticket-system",
+            statuses: dict.from_list([
+              #("todo", "status-todo"),
+              #("done", "status-done"),
+            ]),
+            status_map_validated: False,
+          ),
+        ),
+      ]),
+    )
+
+  status_map.validate(
+    operator_config,
+    "github",
+    Some("example/tango"),
+    fn(_, _) {
+      panic as "missing role validation should happen before CLI calls"
+    },
+  )
+  |> should.equal(
+    Error(
+      status_map.MissingRoles([
+        "backlog",
+        "in_progress",
+        "human_review",
+        "merging",
+        "blocked",
+        "wont_do",
+      ]),
+    ),
+  )
+}
+
+pub fn automatch_persists_unambiguous_matches_and_requires_validation_test() {
+  let operator_config =
+    config.Config(
+      ..config.defaults("/tmp/tango", None),
+      registries: dict.from_list([
+        #(
+          "github",
+          config.RegistryConfig(
+            cli: "gh",
+            skill: "github-ticket-system",
+            statuses: dict.new(),
+            status_map_validated: True,
+          ),
+        ),
+      ]),
+    )
+
+  let assert Ok(#(updated, view)) =
+    status_map.automatch(
+      operator_config,
+      "github",
+      Some("example/tango"),
+      fn(_, _) {
+        Ok(process.CommandResult(
+          exit_code: 0,
+          output: "[{\"name\":\"status-backlog\"},{\"name\":\"status-todo\"},{\"name\":\"status-active\"},{\"name\":\"status-review\"},{\"name\":\"status-blocked\"},{\"name\":\"status-done\"},{\"name\":\"status-canceled\"}]",
+        ))
+      },
+    )
+
+  view.matched
+  |> should.equal([
+    #("backlog", "status-backlog"),
+    #("todo", "status-todo"),
+    #("in_progress", "status-active"),
+    #("human_review", "status-review"),
+    #("merging", "status-review"),
+    #("blocked", "status-blocked"),
+    #("done", "status-done"),
+    #("wont_do", "status-canceled"),
+  ])
+  view.unmatched_roles
+  |> should.equal([])
+  view.ambiguous_roles
+  |> should.equal([])
+
+  let assert Ok(registry) = dict.get(updated.registries, "github")
+  registry.status_map_validated
+  |> should.equal(False)
+  dict.get(registry.statuses, "done")
+  |> should.equal(Ok("status-done"))
+  dict.get(registry.statuses, "merging")
+  |> should.equal(Ok("status-review"))
+}
+
+pub fn automatch_reports_ambiguous_and_unmatched_roles_test() {
+  let operator_config =
+    config.Config(
+      ..config.defaults("/tmp/tango", None),
+      registries: dict.from_list([
+        #(
+          "github",
+          config.RegistryConfig(
+            cli: "gh",
+            skill: "github-ticket-system",
+            statuses: dict.new(),
+            status_map_validated: False,
+          ),
+        ),
+      ]),
+    )
+
+  let assert Ok(#(updated, view)) =
+    status_map.automatch(
+      operator_config,
+      "github",
+      Some("example/tango"),
+      fn(_, _) {
+        Ok(process.CommandResult(
+          exit_code: 0,
+          output: "[{\"name\":\"done\"},{\"name\":\"closed\"},{\"name\":\"todo\"}]",
+        ))
+      },
+    )
+
+  view.matched
+  |> should.equal([#("todo", "todo")])
+  view.ambiguous_roles
+  |> should.equal([#("done", ["closed", "done"])])
+  view.unmatched_roles
+  |> should.equal([
+    "backlog",
+    "in_progress",
+    "human_review",
+    "merging",
+    "blocked",
+    "wont_do",
+  ])
+
+  let assert Ok(registry) = dict.get(updated.registries, "github")
+  dict.get(registry.statuses, "todo")
+  |> should.equal(Ok("todo"))
+  dict.get(registry.statuses, "done")
+  |> should.be_error()
 }
 
 pub fn set_marks_existing_mapping_unvalidated_test() {

@@ -35,6 +35,7 @@ pub type CliCommand {
   CapabilityProfileCreate(String, String, String)
   TicketSystemStatusMapShow(String)
   TicketSystemStatusMapDiscover(String, Option(String))
+  TicketSystemStatusMapAutomatch(String, Option(String))
   TicketSystemStatusMapValidate(String, Option(String))
   TicketSystemStatusMapSet(String, String, String)
   TicketCreate(onboarding.CreateTicketInput, Bool)
@@ -205,6 +206,8 @@ fn run_with_confirmation(
     TicketSystemStatusMapShow(name) -> ticket_system_status_map_show(root, name)
     TicketSystemStatusMapDiscover(name, repository) ->
       ticket_system_status_map_discover(root, name, repository)
+    TicketSystemStatusMapAutomatch(name, repository) ->
+      ticket_system_status_map_automatch(root, name, repository)
     TicketSystemStatusMapValidate(name, repository) ->
       ticket_system_status_map_validate(root, name, repository)
     TicketSystemStatusMapSet(name, role, status_id) ->
@@ -382,11 +385,20 @@ pub fn render_error(error: CliError) -> String {
       "ticket-system status-map discovery failed: " <> reason
     StatusMap(status_map.MissingRole(role)) ->
       "ticket-system status-map is missing required role: " <> role
+    StatusMap(status_map.MissingRoles(roles)) ->
+      "ticket-system status-map is missing required roles: "
+      <> string.join(roles, ", ")
     StatusMap(status_map.MissingMappedStatus(role, status_id)) ->
       "ticket-system status-map role "
       <> role
       <> " refers to missing status id: "
       <> status_id
+    StatusMap(status_map.MissingMappedStatuses(statuses)) ->
+      "ticket-system status-map roles refer to missing status ids: "
+      <> string.join(
+        list.map(statuses, fn(status) { status.0 <> "=" <> status.1 }),
+        ", ",
+      )
   }
 }
 
@@ -442,6 +454,7 @@ fn usage() -> String {
       "  tango capability profile create <name> --ticket-system <name> --forge <name>",
       "  tango ticket-system status-map <name> show",
       "  tango ticket-system status-map <name> discover --repo <owner/repo>",
+      "  tango ticket-system status-map <name> automatch --repo <owner/repo>",
       "  tango ticket-system status-map <name> validate --repo <owner/repo>",
       "  tango ticket-system status-map <name> set --role <role> --status-id <stable-id>",
       "  tango ticket create --repo <owner/repo-or-clone-url> [--repo <owner/repo-or-clone-url> ...] --ticket-ref <reference> --ticket-system <name> --forge <github|forgejo> --capability-profile <name> [--label <label> ...] [--priority <positive-int>] [--lifecycle-policy <reference>] [--queue]",
@@ -541,6 +554,11 @@ fn parse_ticket_system_status_map(
       parse_status_map_repo(args)
       |> result.map(fn(repository) {
         TicketSystemStatusMapDiscover(name, repository)
+      })
+    name, ["automatch", ..args] ->
+      parse_status_map_repo(args)
+      |> result.map(fn(repository) {
+        TicketSystemStatusMapAutomatch(name, repository)
       })
     name, ["validate", ..args] ->
       parse_status_map_repo(args)
@@ -650,6 +668,28 @@ fn ticket_system_status_map_discover(
   ))
 }
 
+fn ticket_system_status_map_automatch(
+  root: String,
+  name: String,
+  repository: Option(String),
+) -> Result(String, CliError) {
+  use operator_config <- result.try(load_required_config(root))
+  use result <- result.try(
+    status_map.automatch(
+      operator_config,
+      name,
+      repository,
+      run_status_map_command,
+    )
+    |> result.map_error(StatusMap),
+  )
+  let #(updated, view) = result
+  use _ <- result.try(
+    config.save(join(root, "config.toml"), updated) |> result.map_error(Config),
+  )
+  Ok(render_automatch_view(view))
+}
+
 fn ticket_system_status_map_validate(
   root: String,
   name: String,
@@ -736,6 +776,47 @@ fn render_discovered_statuses(
     ],
     with: "\n",
   )
+}
+
+fn render_automatch_view(view: status_map.AutomatchView) -> String {
+  string.join(
+    [
+      "automatched ticket-system status map: " <> view.name,
+      "provider_kind: " <> view.provider_kind,
+      "matched:",
+      render_role_statuses(view.matched),
+      "ambiguous:",
+      render_ambiguous_roles(view.ambiguous_roles),
+      "unmatched:",
+      render_unmatched_roles(view.unmatched_roles),
+      "validation_required: true",
+      "discovered:",
+      render_status_list(view.discovered),
+    ],
+    with: "\n",
+  )
+}
+
+fn render_ambiguous_roles(statuses: List(#(String, List(String)))) -> String {
+  case statuses {
+    [] -> "  (none)"
+    _ ->
+      statuses
+      |> list.map(fn(entry) {
+        "  " <> entry.0 <> " = " <> string.join(entry.1, ", ")
+      })
+      |> string.join(with: "\n")
+  }
+}
+
+fn render_unmatched_roles(roles: List(String)) -> String {
+  case roles {
+    [] -> "  (none)"
+    _ ->
+      roles
+      |> list.map(fn(role) { "  " <> role })
+      |> string.join(with: "\n")
+  }
 }
 
 fn render_role_statuses(statuses: List(#(String, String))) -> String {

@@ -84,7 +84,43 @@ pull-request and merge skill. They may use the same CLI, but they are selected
 independently so future non-forge ticket systems can be combined with either
 forge.
 
-2. Create and queue the ticket in Tango. Repository values must be GitHub
+2. Automatch and validate the ticket-system status map for the repository
+   before creating tickets:
+
+```sh
+mise exec gleam@latest -- gleam run -- ticket-system status-map github automatch \
+  --repo paradise-runner/tango
+mise exec gleam@latest -- gleam run -- ticket-system status-map github validate \
+  --repo paradise-runner/tango
+```
+
+Tango uses this map to translate its lifecycle states, such as `Done`, into the
+ticket system's stable status or label identifiers. `automatch` is the easy
+mode for new repositories: it discovers provider statuses, fills every
+unambiguous lifecycle match it recognizes, and leaves validation required so you
+can confirm the result.
+
+If automatch or validation reports ambiguous or missing roles, inspect the
+current map and available provider statuses:
+
+```sh
+mise exec gleam@latest -- gleam run -- ticket-system status-map github show
+mise exec gleam@latest -- gleam run -- ticket-system status-map github discover \
+  --repo paradise-runner/tango
+```
+
+Then update the missing role with the stable provider identifier and validate
+again:
+
+```sh
+mise exec gleam@latest -- gleam run -- ticket-system status-map github set \
+  --role done \
+  --status-id closed
+mise exec gleam@latest -- gleam run -- ticket-system status-map github validate \
+  --repo paradise-runner/tango
+```
+
+3. Create and queue the ticket in Tango. Repository values must be GitHub
    `owner/repo` shorthand or full Git clone URLs; aicasa creates the isolated
    ticket workspace used by the agent.
 
@@ -98,7 +134,7 @@ mise exec gleam@latest -- gleam run -- ticket create \
   --queue
 ```
 
-3. Run the orchestrator and watch progress:
+4. Run the orchestrator and watch progress:
 
 ```sh
 mise exec gleam@latest -- gleam run -- run
@@ -113,14 +149,14 @@ mise exec gleam@latest -- gleam run -- ticket show <ticket-id>
 mise exec gleam@latest -- gleam run -- review list
 ```
 
-4. When the ticket reaches human review, inspect the generated work and approve merge:
+5. When the ticket reaches human review, inspect the generated work and approve merge:
 
 ```sh
 mise exec gleam@latest -- gleam run -- review show <ticket-id>
 mise exec gleam@latest -- gleam run -- review merge <ticket-id>
 ```
 
-5. Keep `tango run` active until the merge worker finishes and the ticket reaches `Done`. Confirm with:
+6. Keep `tango run` active until the merge worker finishes and the ticket reaches `Done`. Confirm with:
 
 ```sh
 mise exec gleam@latest -- gleam run -- ticket show <ticket-id>

@@ -128,6 +128,18 @@ pub fn parse_supported_commands_test() {
     "ticket-system",
     "status-map",
     "github",
+    "automatch",
+    "--repo",
+    "example/tango",
+  ])
+  |> should.equal(
+    Ok(cli.TicketSystemStatusMapAutomatch("github", Some("example/tango"))),
+  )
+
+  cli.parse([
+    "ticket-system",
+    "status-map",
+    "github",
     "validate",
     "--repo",
     "example/tango",
