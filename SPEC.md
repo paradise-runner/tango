@@ -94,10 +94,10 @@ Important boundaries:
    - Prepares repository checkouts according to the ticket's repository bindings.
    - Preserves or removes workspaces according to lifecycle policy.
 
-8. `Agent Runtime Adapter`
-   - Starts and supervises a local coding agent process.
-   - Builds run prompts from the ticket reference or inline content, capability profile, repository binding, lifecycle contract, and prior artifacts.
-   - Streams events and run outputs back to Tango.
+8. `Harness Runtime Adapter`
+   - Starts and supervises a local coding harness process for an assigned agent.
+   - Receives the assembled run prompt, workspace path, workpad path, and optional runtime resume session.
+   - Maps Tango's harness request/response contract to the selected local harness, such as Codex.
 
 9. `VCS Adapter`
    - Prepares repositories and validates source-control state, branches, diffs, and agent-created commits.
