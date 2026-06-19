@@ -7,7 +7,6 @@ import gleam/option.{type Option, None, Some}
 import gleam/order
 import gleam/result
 import gleam/string
-import tango/agent/adapter
 import tango/app/command
 import tango/app/run_command
 import tango/attestation/adapter as attestation
@@ -24,6 +23,7 @@ import tango/domain/run
 import tango/domain/session
 import tango/domain/ticket
 import tango/git/adapter as git
+import tango/harness/adapter as harness
 import tango/log
 import tango/prompt
 import tango/run_process
@@ -39,7 +39,7 @@ pub type WorkerError {
   RunFailure(run_command.RunCommandError)
   WorkspaceFailure(workspace.WorkspaceError)
   WorkpadFailure(workpad.WorkpadError)
-  AgentFailure(adapter.AgentError)
+  HarnessFailure(harness.HarnessError)
   SessionNotFound(String)
   ArtifactMissing(String)
   ArtifactInvalid(String)
@@ -51,7 +51,7 @@ pub type WorkerDependencies {
     workspace: workspace.WorkspaceAdapter,
     git: git.GitAdapter,
     attestation: attestation.Adapters,
-    agent: adapter.AgentAdapter,
+    harness: harness.HarnessAdapter,
   )
 }
 
@@ -281,7 +281,7 @@ pub fn execute(
     |> result.map_error(RunFailure),
   )
   let request =
-    adapter.AgentRequest(
+    harness.HarnessRequest(
       prompt: assembled_prompt,
       workspace_path: current_workspace.root_path,
       workpad_path: workpad_item.root_path,
@@ -344,7 +344,7 @@ pub fn execute(
         <> " run_id="
         <> attempt.id,
       )
-      let agent_result = dependencies.agent.run(request)
+      let agent_result = dependencies.harness.run(request)
       let _ =
         run_process.mark_ended(
           state_dir,
@@ -352,7 +352,9 @@ pub fn execute(
           attempt.id,
           runtime.now_rfc3339(),
         )
-      use response <- result.try(agent_result |> result.map_error(AgentFailure))
+      use response <- result.try(
+        agent_result |> result.map_error(HarnessFailure),
+      )
       log.info(
         "worker agent exited ticket_id="
         <> item.id
@@ -686,7 +688,7 @@ fn finish_run(
   git_adapter: git.GitAdapter,
   attestation_adapters: attestation.Adapters,
   workpad_item: workpad.Workpad,
-  response: adapter.AgentResponse,
+  response: harness.HarnessResponse,
 ) -> Result(#(state, run.RunAttempt), run_command.RunCommandError) {
   use #(state, _) <- result.try(run_command.update_status(
     backend,
@@ -766,7 +768,7 @@ fn record_response_usage(
   state: state,
   ticket_id: String,
   run_id: String,
-  response: adapter.AgentResponse,
+  response: harness.HarnessResponse,
 ) -> Result(state, run_command.RunCommandError) {
   case response.usage {
     None -> Ok(state)
@@ -2979,7 +2981,7 @@ pub fn error_text(error: WorkerError) -> String {
     RunFailure(inner) -> "run failure: " <> string.inspect(inner)
     WorkspaceFailure(inner) -> "workspace failure: " <> string.inspect(inner)
     WorkpadFailure(inner) -> "workpad failure: " <> string.inspect(inner)
-    AgentFailure(inner) -> "agent failure: " <> string.inspect(inner)
+    HarnessFailure(inner) -> "harness failure: " <> string.inspect(inner)
     SessionNotFound(session_id) -> "session not found: " <> session_id
     ArtifactMissing(name) -> "missing artifact: " <> name
     ArtifactInvalid(reason) -> "invalid artifact: " <> reason

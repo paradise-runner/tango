@@ -7,10 +7,10 @@ import gleam/otp/actor
 import gleam/otp/static_supervisor
 import gleam/result
 import gleam/string
-import tango/agent/codex
 import tango/attestation/configured as configured_attestation
 import tango/config
 import tango/git/adapter as git
+import tango/harness/codex
 import tango/log
 import tango/orchestrator
 import tango/review_watcher
@@ -41,7 +41,7 @@ pub fn start(runtime_config: config.Config) -> actor.StartResult(Runtime) {
       )),
       git: git.adapter("git"),
       attestation: configured_attestation.adapters(),
-      agent: codex.adapter(codex.CodexConfig(
+      harness: codex.adapter(codex.CodexConfig(
         command: runtime_config.agent_codex.command,
       )),
     )
