@@ -76,10 +76,9 @@ src/
     workspace.gleam
     aicasa.gleam
   tango/prompt.gleam
-  tango/agent/
+  tango/harness/
     adapter.gleam
     codex.gleam
-    fake.gleam
   tango/vcs/
     adapter.gleam
     git.gleam
@@ -468,7 +467,7 @@ Execution worker sequence:
 1. Load ticket, create or load its main implementation session, and load prior artifacts.
 2. Ask `casa` to create or inspect the ticket's multi-repository workspace.
 3. Create the run workpad and build one autonomous execution prompt envelope.
-4. Launch the assigned local agent through `AgentAdapter`.
+4. Launch the assigned local agent through `HarnessAdapter`.
 5. Require the agent to fetch the external ticket using the selected capability profile and write a normalized ticket snapshot to the workpad.
 6. Require the agent to reconcile the external ticket to the stable status ID mapped from the current Tango lifecycle state and report the observed final status.
 7. Observe workpad stage markers as non-gating progress reports while allowing the agent to continue.
@@ -540,23 +539,37 @@ Recommended prompt sections:
 
 Ticket content can replace task-specific workflow details, but it should not replace Tango's lifecycle contract or safety constraints.
 
-## 10. Codex Adapter
+## 10. Harness Adapter
 
-The Codex adapter should be one implementation of `AgentAdapter`.
+The harness adapter expresses the local process contract Tango needs from any
+coding harness. Codex is one implementation of `HarnessAdapter`.
 
-Suggested interface:
+Current interface:
 
 ```gleam
-pub type AgentAdapter {
-  AgentAdapter(
-    start: fn(AgentStartRequest) -> Result(RuntimeSession, AgentError),
-    run: fn(RuntimeSession, AgentRunRequest) -> Result(AgentRunOutput, AgentError),
-    stop: fn(RuntimeSession) -> Result(Nil, AgentError),
+pub type HarnessRequest {
+  HarnessRequest(
+    prompt: String,
+    workspace_path: String,
+    workpad_path: String,
+    resume_session_id: Option(String),
   )
+}
+
+pub type HarnessResponse {
+  HarnessResponse(
+    exit_code: Int,
+    output: String,
+    runtime_session_id: Option(String),
+  )
+}
+
+pub type HarnessAdapter {
+  HarnessAdapter(run: fn(HarnessRequest) -> Result(HarnessResponse, HarnessError))
 }
 ```
 
-Codex-specific details should live in `tango/agent/codex.gleam`:
+Codex-specific details should live in `tango/harness/codex.gleam`:
 
 - command discovery;
 - protocol selection;

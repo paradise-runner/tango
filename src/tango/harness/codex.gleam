@@ -5,8 +5,8 @@ import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
 import gleam/string
-import tango/agent/adapter
 import tango/domain/run as run_domain
+import tango/harness/adapter
 import tango/log
 import tango/process
 
@@ -14,14 +14,14 @@ pub type CodexConfig {
   CodexConfig(command: String)
 }
 
-pub fn adapter(config: CodexConfig) -> adapter.AgentAdapter {
-  adapter.AgentAdapter(run: fn(request) { run(request, config) })
+pub fn adapter(config: CodexConfig) -> adapter.HarnessAdapter {
+  adapter.HarnessAdapter(run: fn(request) { run(request, config) })
 }
 
 pub fn run(
-  request: adapter.AgentRequest,
+  request: adapter.HarnessRequest,
   config: CodexConfig,
-) -> Result(adapter.AgentResponse, adapter.AgentError) {
+) -> Result(adapter.HarnessResponse, adapter.HarnessError) {
   let args = command_args(request)
   log.info(
     "codex exec starting workspace_path="
@@ -44,7 +44,7 @@ pub fn run(
     |> result.map_error(adapter.LaunchFailed),
   )
   log.info("codex exec exited code=" <> int.to_string(command_result.exit_code))
-  Ok(adapter.AgentResponse(
+  Ok(adapter.HarnessResponse(
     exit_code: command_result.exit_code,
     output: command_result.output,
     runtime_session_id: extract_runtime_session_id(command_result.output),
@@ -52,7 +52,7 @@ pub fn run(
   ))
 }
 
-pub fn command_args(request: adapter.AgentRequest) -> List(String) {
+pub fn command_args(request: adapter.HarnessRequest) -> List(String) {
   case request.resume_session_id {
     Some(session_id) -> [
       "exec",

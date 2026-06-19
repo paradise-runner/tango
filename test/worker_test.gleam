@@ -4,8 +4,6 @@ import gleam/option.{None, Some}
 import gleam/result
 import gleam/string
 import gleeunit/should
-import tango/agent/adapter
-import tango/agent/codex
 import tango/attestation/adapter as attestation
 import tango/domain/artifact
 import tango/domain/forge
@@ -19,6 +17,8 @@ import tango/domain/run
 import tango/domain/session
 import tango/domain/ticket
 import tango/git/adapter as git
+import tango/harness/adapter
+import tango/harness/codex
 import tango/store/file
 import tango/store/memory_store
 import tango/store/store
@@ -322,7 +322,7 @@ fn initial_review_cursor() -> review_cursor.ReviewCommentCursor {
 
 pub fn codex_exec_command_uses_workspace_write_and_workpad_test() {
   let request =
-    adapter.AgentRequest(
+    adapter.HarnessRequest(
       prompt: "hello",
       workspace_path: "/tmp/workspace",
       workpad_path: "/tmp/workpad",
@@ -352,7 +352,7 @@ pub fn codex_exec_command_uses_workspace_write_and_workpad_test() {
 
 pub fn codex_exec_command_adds_sandbox_paths_test() {
   let request =
-    adapter.AgentRequest(
+    adapter.HarnessRequest(
       prompt: "hello",
       workspace_path: "/tmp/workspace",
       workpad_path: "/tmp/workpad",
@@ -386,7 +386,7 @@ pub fn codex_exec_command_adds_sandbox_paths_test() {
 
 pub fn codex_resume_command_uses_resume_session_id_test() {
   let request =
-    adapter.AgentRequest(
+    adapter.HarnessRequest(
       prompt: "resume",
       workspace_path: "/tmp/workspace",
       workpad_path: "/tmp/workpad",
@@ -458,7 +458,7 @@ pub fn worker_execute_creates_manifest_and_completes_run_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         request.prompt
         |> string.contains("cli: test-registry")
         |> should.be_true()
@@ -493,7 +493,7 @@ pub fn worker_execute_creates_manifest_and_completes_run_test() {
         |> should.be_true()
         let assert Ok(_) =
           write_execution_success_artifacts(request.workpad_path)
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{\"thread_id\":\"thread-1\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":25,\"output_tokens\":20,\"reasoning_output_tokens\":5,\"total_tokens\":120}}",
           runtime_session_id: Some("thread-1"),
@@ -605,7 +605,7 @@ pub fn worker_request_exposes_installed_skill_directories_to_agent_sandbox_test(
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         request.sandbox_paths
         |> list.contains(root <> "/capabilities/ticket-systems/github")
         |> should.be_true()
@@ -614,7 +614,7 @@ pub fn worker_request_exposes_installed_skill_directories_to_agent_sandbox_test(
         |> should.be_true()
         let assert Ok(_) =
           write_execution_success_artifacts(request.workpad_path)
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -669,10 +669,10 @@ pub fn execution_promotion_does_not_require_external_comments_test() {
         }),
         forge: attestation.passthrough().forge,
       ),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           write_execution_success_artifacts(request.workpad_path)
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{\"thread_id\":\"thread-1\"}",
           runtime_session_id: Some("thread-1"),
@@ -713,7 +713,7 @@ pub fn registry_sync_rejects_unverified_observed_status_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           file.atomic_replace(
             request.workpad_path <> "/external-updates.json",
@@ -724,7 +724,7 @@ pub fn registry_sync_rejects_unverified_observed_status_test() {
             request.workpad_path <> "/result.json",
             "{\"schema_version\":1,\"run_id\":\"registry-sync-run\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "registry remained stale",
           runtime_session_id: None,
@@ -763,7 +763,7 @@ pub fn registry_sync_mirrors_failed_as_blocked_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         request.prompt
         |> string.contains("requested_role: blocked")
         |> should.be_true()
@@ -777,7 +777,7 @@ pub fn registry_sync_mirrors_failed_as_blocked_test() {
             request.workpad_path <> "/result.json",
             "{\"schema_version\":1,\"run_id\":\"registry-sync-run\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "failed mirrored as blocked",
           runtime_session_id: None,
@@ -819,8 +819,8 @@ pub fn worker_execute_fails_without_result_json_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(_) {
-        Ok(adapter.AgentResponse(
+      harness: adapter.HarnessAdapter(run: fn(_) {
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -859,7 +859,7 @@ pub fn worker_execute_does_not_partially_promote_malformed_artifacts_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           write_execution_success_artifacts(request.workpad_path)
         let assert Ok(_) =
@@ -872,7 +872,7 @@ pub fn worker_execute_does_not_partially_promote_malformed_artifacts_test() {
             request.workpad_path <> "/result.json",
             "{\"schema_version\":1,\"run_id\":\"run-1\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"normalized_ticket\":\"ticket.json\",\"research_notes\":\"research.md\",\"plan\":\"plan.md\",\"diff_summary\":\"diff-summary.md\",\"implementation_notes\":\"implementation.md\",\"validation_report\":\"validation.json\",\"pull_request_set\":\"pull-requests.json\",\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -911,7 +911,7 @@ pub fn worker_execute_rejects_disallowed_workpad_file_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           write_execution_success_artifacts(request.workpad_path)
         let assert Ok(_) =
@@ -921,7 +921,7 @@ pub fn worker_execute_rejects_disallowed_workpad_file_test() {
           )
         let assert Ok(_) =
           file.atomic_replace(request.workpad_path <> "/unexpected.txt", "no")
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -962,7 +962,7 @@ pub fn review_watch_advances_cursor_and_requests_changes_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let artifact =
           "{\"schema_version\":1,\"pull_requests\":[{\"pull_request_ref\":\"https://example.test/pr/1\",\"previous_count\":1,\"final_count\":3,\"new_comments\":[\"please update tests\"],\"actionable_feedback\":true}]}"
         let assert Ok(_) =
@@ -980,7 +980,7 @@ pub fn review_watch_advances_cursor_and_requests_changes_test() {
             request.workpad_path <> "/result.json",
             "{\"schema_version\":1,\"run_id\":\"watch-1\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"review_comments_report\":\"review-comments.json\",\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -1099,7 +1099,7 @@ pub fn merge_retry_accepts_completed_already_merged_pr_and_marks_ticket_done_tes
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           file.atomic_replace(
             request.workpad_path <> "/merge.json",
@@ -1115,7 +1115,7 @@ pub fn merge_retry_accepts_completed_already_merged_pr_and_marks_ticket_done_tes
             request.workpad_path <> "/result.json",
             "{\"schema_version\":1,\"run_id\":\"merge-run\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"merge_report\":\"merge.json\",\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -1177,7 +1177,7 @@ pub fn partial_multi_repo_merge_persists_progress_and_requires_reapproval_test()
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           file.atomic_replace(
             request.workpad_path <> "/merge.json",
@@ -1193,7 +1193,7 @@ pub fn partial_multi_repo_merge_persists_progress_and_requires_reapproval_test()
             request.workpad_path <> "/result.json",
             "{\"schema_version\":1,\"run_id\":\"merge-run\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"merge_report\":\"merge.json\",\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -1236,10 +1236,10 @@ pub fn execution_dirty_worktree_fails_before_artifact_promotion_test() {
         changed_repositories: fn(_, _) { Ok([]) },
       ),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           write_execution_success_artifacts(request.workpad_path)
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -1273,7 +1273,7 @@ pub fn execution_rejects_reported_pull_request_head_that_differs_from_commit_tes
       workspace: single_repo_workspace(root),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           write_execution_success_artifacts(request.workpad_path)
         let assert Ok(_) =
@@ -1281,7 +1281,7 @@ pub fn execution_rejects_reported_pull_request_head_that_differs_from_commit_tes
             request.workpad_path <> "/pull-requests.json",
             "{\"schema_version\":1,\"pull_requests\":[{\"repo_binding_id\":\"repo-1\",\"commit_id\":\"abc123\",\"pull_request_ref\":\"https://example.test/pr/1\",\"head_commit_id\":\"changed\",\"source_branch\":\"feature\",\"target_branch\":\"main\",\"final_comment_count\":2}]}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -1316,7 +1316,7 @@ pub fn execution_rejects_no_code_when_repository_changed_test() {
         changed_repositories: fn(_, _) { Ok(["repo-1"]) },
       ),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           write_execution_success_artifacts(request.workpad_path)
         let assert Ok(_) =
@@ -1324,7 +1324,7 @@ pub fn execution_rejects_no_code_when_repository_changed_test() {
             request.workpad_path <> "/pull-requests.json",
             "{\"schema_version\":1,\"pull_requests\":[]}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -1363,10 +1363,10 @@ pub fn execution_rejects_omitted_modified_repository_test() {
         changed_repositories: fn(_, _) { Ok(["repo-1", "repo-2"]) },
       ),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           write_execution_success_artifacts(request.workpad_path)
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -1424,10 +1424,10 @@ pub fn execution_rejects_forge_attestation_drift_before_promotion_test() {
           },
         ),
       ),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           write_execution_success_artifacts(request.workpad_path)
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -1488,7 +1488,7 @@ pub fn merge_completion_rejects_unmerged_forge_attestation_test() {
           },
         ),
       ),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           file.atomic_replace(
             request.workpad_path <> "/merge.json",
@@ -1504,7 +1504,7 @@ pub fn merge_completion_rejects_unmerged_forge_attestation_test() {
             request.workpad_path <> "/result.json",
             "{\"schema_version\":1,\"run_id\":\"merge-run\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"merge_report\":\"merge.json\",\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -1546,7 +1546,7 @@ pub fn merge_wrong_workspace_head_blocks_before_agent_launch_test() {
         changed_repositories: fn(_, _) { Ok([]) },
       ),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(_) {
+      harness: adapter.HarnessAdapter(run: fn(_) {
         panic as "merge agent must not launch with a changed workspace head"
       }),
     )
@@ -1600,7 +1600,7 @@ pub fn merge_run_blocks_when_reviewed_set_drifted_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(_) {
+      harness: adapter.HarnessAdapter(run: fn(_) {
         Error(adapter.LaunchFailed(
           "merge agent must not launch after reviewed-set drift",
         ))
@@ -1642,7 +1642,7 @@ pub fn merge_blocked_result_resumes_at_human_review_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           file.atomic_replace(
             request.workpad_path <> "/merge.json",
@@ -1658,7 +1658,7 @@ pub fn merge_blocked_result_resumes_at_human_review_test() {
             request.workpad_path <> "/result.json",
             "{\"schema_version\":1,\"run_id\":\"merge-run\",\"status\":\"blocked\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"merge_report\":\"merge.json\",\"external_updates\":\"external-updates.json\"},\"block\":{\"reason\":\"merge needs human recovery\",\"resolution_instructions\":\"inspect the pull request\"}}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
@@ -1731,7 +1731,7 @@ fn review_watch_dependencies(
     }),
     git: git.passthrough(),
     attestation: attestation.passthrough(),
-    agent: adapter.AgentAdapter(run: fn(request) {
+    harness: adapter.HarnessAdapter(run: fn(request) {
       let assert Ok(_) =
         file.atomic_replace(
           request.workpad_path <> "/review-comments.json",
@@ -1747,7 +1747,7 @@ fn review_watch_dependencies(
           request.workpad_path <> "/result.json",
           "{\"schema_version\":1,\"run_id\":\"watch-1\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"review_comments_report\":\"review-comments.json\",\"external_updates\":\"external-updates.json\"},\"block\":null}",
         )
-      Ok(adapter.AgentResponse(
+      Ok(adapter.HarnessResponse(
         exit_code: 0,
         output: "{}",
         runtime_session_id: None,
@@ -1775,7 +1775,7 @@ pub fn registry_sync_run_updates_observed_external_status_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let assert Ok(_) =
           file.atomic_replace(
             request.workpad_path <> "/external-updates.json",
@@ -1786,7 +1786,7 @@ pub fn registry_sync_run_updates_observed_external_status_test() {
             request.workpad_path <> "/result.json",
             "{\"schema_version\":1,\"run_id\":\"registry-sync-run\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "registry synchronized",
           runtime_session_id: None,

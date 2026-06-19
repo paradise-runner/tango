@@ -1,8 +1,8 @@
 import gleam/option.{type Option}
 import tango/domain/run
 
-pub type AgentRequest {
-  AgentRequest(
+pub type HarnessRequest {
+  HarnessRequest(
     prompt: String,
     workspace_path: String,
     workpad_path: String,
@@ -12,8 +12,8 @@ pub type AgentRequest {
   )
 }
 
-pub type AgentResponse {
-  AgentResponse(
+pub type HarnessResponse {
+  HarnessResponse(
     exit_code: Int,
     output: String,
     runtime_session_id: Option(String),
@@ -21,10 +21,12 @@ pub type AgentResponse {
   )
 }
 
-pub type AgentError {
+pub type HarnessError {
   LaunchFailed(String)
 }
 
-pub type AgentAdapter {
-  AgentAdapter(run: fn(AgentRequest) -> Result(AgentResponse, AgentError))
+pub type HarnessAdapter {
+  HarnessAdapter(
+    run: fn(HarnessRequest) -> Result(HarnessResponse, HarnessError),
+  )
 }

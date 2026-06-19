@@ -235,5 +235,5 @@ This tracker lists the remaining work from [SPEC.md](SPEC.md) and
 - [ ] Add operator controls for pause, cancel, bounded manual retry, process
   termination, archival, and pruning.
 - [ ] Add harness and model/provider selection.
-  - First build a mapping of every Codex capability Tango depends on so a new
-    harness can implement the same adapter contract.
+  - [x] Build the initial `HarnessAdapter` contract and move Codex behind it.
+  - [ ] Add operator-facing harness and model/provider selection.

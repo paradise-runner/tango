@@ -4,7 +4,6 @@ import gleam/list
 import gleam/option.{None, Some}
 import gleam/string
 import gleeunit/should
-import tango/agent/adapter
 import tango/attestation/adapter as attestation
 import tango/domain/artifact
 import tango/domain/lifecycle
@@ -15,6 +14,7 @@ import tango/domain/run
 import tango/domain/session
 import tango/domain/ticket
 import tango/git/adapter as git
+import tango/harness/adapter
 import tango/orchestrator
 import tango/review_watcher
 import tango/runtime
@@ -47,7 +47,7 @@ pub fn orchestrator_dispatches_queued_ticket_under_worker_supervision_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let run_id = workpad_run_id(request.workpad_path)
         let assert Ok(_) =
           file.atomic_replace(
@@ -93,7 +93,7 @@ pub fn orchestrator_dispatches_queued_ticket_under_worker_supervision_test() {
               <> run_id
               <> "\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"normalized_ticket\":\"ticket.json\",\"research_notes\":\"research.md\",\"plan\":\"plan.md\",\"diff_summary\":\"diff-summary.md\",\"implementation_notes\":\"implementation.md\",\"validation_report\":\"validation.json\",\"pull_request_set\":\"pull-requests.json\",\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "complete",
           runtime_session_id: Some("runtime-session"),
@@ -176,7 +176,7 @@ pub fn orchestrator_dispatches_review_watch_ticket_test() {
           },
         ),
       ),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let run_id = workpad_run_id(request.workpad_path)
         let artifact =
           "{\"schema_version\":1,\"pull_requests\":[{\"pull_request_ref\":\"https://example.test/pr/1\",\"previous_count\":1,\"final_count\":2,\"new_comments\":[\"needs changes\"],\"actionable_feedback\":true}]}"
@@ -197,7 +197,7 @@ pub fn orchestrator_dispatches_review_watch_ticket_test() {
               <> run_id
               <> "\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"review_comments_report\":\"review-comments.json\",\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "complete",
           runtime_session_id: Some("runtime-review"),
@@ -303,7 +303,7 @@ pub fn review_watcher_skips_agent_when_comment_count_is_unchanged_test() {
           },
         ),
       ),
-      agent: adapter.AgentAdapter(run: fn(_) {
+      harness: adapter.HarnessAdapter(run: fn(_) {
         panic as "unchanged PR comments must not start a review agent"
       }),
     )
@@ -382,7 +382,7 @@ pub fn orchestrator_dispatches_merge_ticket_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let run_id = workpad_run_id(request.workpad_path)
         let assert Ok(_) =
           file.atomic_replace(
@@ -401,7 +401,7 @@ pub fn orchestrator_dispatches_merge_ticket_test() {
               <> run_id
               <> "\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"merge_report\":\"merge.json\",\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "merged",
           runtime_session_id: Some("runtime-merge"),
@@ -484,7 +484,7 @@ pub fn orchestrator_dispatches_registry_sync_for_pending_review_status_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         let run_id = workpad_run_id(request.workpad_path)
         let assert Ok(_) =
           file.atomic_replace(
@@ -498,7 +498,7 @@ pub fn orchestrator_dispatches_registry_sync_for_pending_review_status_test() {
               <> run_id
               <> "\",\"status\":\"succeeded\",\"completed_at\":\"2026-06-07T00:10:00Z\",\"artifacts\":{\"external_updates\":\"external-updates.json\"},\"block\":null}",
           )
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 0,
           output: "registry synchronized",
           runtime_session_id: None,
@@ -567,8 +567,8 @@ pub fn orchestrator_restores_failed_execution_for_polled_retry_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(_) {
-        Ok(adapter.AgentResponse(
+      harness: adapter.HarnessAdapter(run: fn(_) {
+        Ok(adapter.HarnessResponse(
           exit_code: 1,
           output: "agent failed",
           runtime_session_id: None,
@@ -631,7 +631,7 @@ pub fn orchestrator_records_worker_start_failure_reason_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(_) {
+      harness: adapter.HarnessAdapter(run: fn(_) {
         panic as "agent should not launch when workspace provisioning fails"
       }),
     )
@@ -702,7 +702,7 @@ pub fn orchestrator_records_worker_crash_after_streaming_test() {
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(_) {
+      harness: adapter.HarnessAdapter(run: fn(_) {
         panic as "agent crashed after streaming"
       }),
     )
@@ -802,7 +802,7 @@ pub fn changes_requested_dispatches_fresh_contextual_implementation_session_test
       }),
       git: git.passthrough(),
       attestation: attestation.passthrough(),
-      agent: adapter.AgentAdapter(run: fn(request) {
+      harness: adapter.HarnessAdapter(run: fn(request) {
         request.resume_session_id
         |> should.equal(None)
         request.prompt
@@ -823,7 +823,7 @@ pub fn changes_requested_dispatches_fresh_contextual_implementation_session_test
         request.prompt
         |> string.contains("TODO/comment entries are observability-only")
         |> should.be_true()
-        Ok(adapter.AgentResponse(
+        Ok(adapter.HarnessResponse(
           exit_code: 1,
           output: "stop after prompt inspection",
           runtime_session_id: Some("must-not-be-reused"),
