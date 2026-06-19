@@ -30,6 +30,10 @@ pub type PullRequestState {
   Merged
 }
 
+type RepositoryIdentity {
+  RepositoryIdentity(host: Option(String), path: String)
+}
+
 pub type PullRequestRequest {
   PullRequestRequest(
     binding: forge.ForgeBinding,
@@ -241,34 +245,81 @@ fn match_optional_branch(
 }
 
 fn same_repository(left: String, right: String) -> Bool {
-  normalize_repository(left) == normalize_repository(right)
+  case repository_identity(left), repository_identity(right) {
+    RepositoryIdentity(Some(left_host), left_path),
+      RepositoryIdentity(Some(right_host), right_path)
+    -> left_host == right_host && left_path == right_path
+    RepositoryIdentity(_, left_path), RepositoryIdentity(_, right_path) ->
+      left_path == right_path
+  }
 }
 
-fn normalize_repository(value: String) -> String {
-  value
-  |> string.trim
-  |> string.lowercase
-  |> trim_suffix("/")
-  |> trim_suffix(".git")
-  |> strip_scheme
-  |> strip_git_user
+fn repository_identity(value: String) -> RepositoryIdentity {
+  let cleaned =
+    value
+    |> string.trim
+    |> string.lowercase
+    |> trim_suffix("/")
+    |> trim_suffix(".git")
+
+  let #(host, path) = split_repository_identity(cleaned)
+
+  RepositoryIdentity(
+    host: host,
+    path: path |> trim_suffix("/") |> trim_suffix(".git"),
+  )
 }
 
-fn strip_scheme(value: String) -> String {
+fn split_repository_identity(value: String) -> #(Option(String), String) {
   case string.split(value, "://") {
-    [_, rest] -> rest
-    _ -> value
+    [_, rest] -> split_host_path(rest)
+    _ -> {
+      case string.starts_with(value, "git@") {
+        True -> split_git_host_path(value)
+        False -> split_optional_plain_host_path(value)
+      }
+    }
   }
 }
 
-fn strip_git_user(value: String) -> String {
-  case string.starts_with(value, "git@") {
-    True ->
-      value
-      |> string.drop_start(4)
-      |> string.replace(":", "/")
-    False -> value
+fn split_git_host_path(value: String) -> #(Option(String), String) {
+  case value |> string.drop_start(4) |> string.split(":") {
+    [host, path] -> #(Some(host), path)
+    _ -> #(None, value)
   }
+}
+
+fn split_optional_plain_host_path(value: String) -> #(Option(String), String) {
+  case string.split(value, "/") {
+    [host, owner, name, ..rest] -> {
+      case looks_like_host(host) {
+        True -> #(Some(host), string.join([owner, name, ..rest], with: "/"))
+        False -> #(None, value)
+      }
+    }
+    _ -> #(None, value)
+  }
+}
+
+fn split_host_path(value: String) -> #(Option(String), String) {
+  case string.split(value, "/") {
+    [host, owner, name, ..rest] -> #(
+      Some(host),
+      string.join([owner, name, ..rest], with: "/"),
+    )
+    _ -> #(None, value)
+  }
+}
+
+fn looks_like_host(value: String) -> Bool {
+  let host =
+    value
+    |> string.trim
+    |> string.lowercase
+
+  host == "localhost"
+  || string.contains(host, ".")
+  || string.contains(host, ":")
 }
 
 fn trim_suffix(value: String, suffix: String) -> String {

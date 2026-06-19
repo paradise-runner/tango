@@ -711,6 +711,55 @@ pub fn review_merge_approves_ticket_and_creates_merge_session_test() {
   |> should.be_ok()
 }
 
+pub fn review_merge_resolves_ticket_external_ref_test() {
+  let assert Ok(root) = file.temporary_directory("tango-cli-merge-external-ref")
+  let backend = json_store.store()
+  let issue_url = "https://github.com/paradise-runner/tango/issues/1"
+  let review_ready =
+    ticket.Ticket(
+      ..onboarded_ticket(),
+      identifier: issue_url,
+      external_ref: Some(issue_url),
+      state: lifecycle.AwaitingHumanReview,
+    )
+  let state = json_store.new(root)
+  let assert Ok(_state) = backend.save_ticket(state, review_ready)
+  let assert Ok(_state) =
+    backend.save_artifact(state, pull_request_set_artifact())
+
+  let assert Ok(message) =
+    cli.run_in_with_confirmation(
+      cli.ReviewMerge(issue_url),
+      root,
+      "local:test",
+      "2026-06-07T00:03:00Z",
+      fn(prefix) {
+        case prefix {
+          "review" -> "review-merge"
+          "session" -> "merge-session"
+          "review-event" -> "event-review"
+          "merge-event" -> "event-merge"
+          other -> other <> "-1"
+        }
+      },
+      fn(_) { True },
+    )
+
+  message
+  |> should.equal("merge approved ticket-1 -> merging")
+  let reopened = json_store.new(root)
+  let assert Ok(updated) = json_store.get_ticket(reopened, "ticket-1")
+  updated.state
+  |> should.equal(lifecycle.Merging)
+  json_store.get_review(reopened, "ticket-1", "review-merge")
+  |> should.be_ok()
+  json_store.get_session(reopened, "ticket-1", "merge-session")
+  |> should.be_ok()
+
+  file.remove_tree(root)
+  |> should.be_ok()
+}
+
 pub fn review_merge_requires_confirmation_test() {
   let assert Ok(root) = file.temporary_directory("tango-cli-merge-confirm")
   let backend = json_store.store()

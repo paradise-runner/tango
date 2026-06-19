@@ -20,6 +20,7 @@ import tango/domain/lifecycle
 import tango/domain/registry_status
 import tango/domain/review
 import tango/domain/session
+import tango/domain/ticket
 import tango/process
 import tango/registry/configured
 import tango/runtime
@@ -531,7 +532,7 @@ fn usage() -> String {
       "  tango ticket show <ticket-id>",
       "  tango review list",
       "  tango review show <ticket-id>",
-      "  tango review merge <ticket-id>",
+      "  tango review merge <ticket-ref>",
       "  tango ticket queue <ticket-id>",
       "  tango ticket unblock <ticket-id>",
     ],
@@ -1389,18 +1390,41 @@ fn map_command_error(
   value |> result.map_error(Command)
 }
 
+fn resolve_ticket_reference(
+  backend: store.Store(state),
+  state: state,
+  reference: String,
+) -> Result(ticket.Ticket, CliError) {
+  case backend.get_ticket(state, reference) {
+    Ok(item) -> Ok(item)
+    Error(store.NotFound(_)) -> {
+      use tickets <- result.try(
+        backend.list_tickets(state) |> result.map_error(Store),
+      )
+
+      tickets
+      |> list.find(fn(item) {
+        item.id == reference
+        || item.identifier == reference
+        || item.external_ref == Some(reference)
+      })
+      |> result.map_error(fn(_) { Store(store.NotFound(reference)) })
+    }
+    Error(error) -> Error(Store(error))
+  }
+}
+
 fn approve_merge(
   backend: store.Store(state),
   state: state,
-  ticket_id: String,
+  ticket_ref: String,
   operator_id: String,
   now: String,
   next_id: fn(String) -> String,
   confirm_merge: fn(MergeConfirmation) -> Bool,
 ) -> Result(String, CliError) {
-  use item <- result.try(
-    backend.get_ticket(state, ticket_id) |> result.map_error(Store),
-  )
+  use item <- result.try(resolve_ticket_reference(backend, state, ticket_ref))
+  let ticket_id = item.id
   use snapshot <- result.try(latest_merge_approval_snapshot(
     backend,
     state,

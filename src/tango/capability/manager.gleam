@@ -329,8 +329,8 @@ fn ticket_system_skill_contents(bundle: Bundle) -> String {
       ],
       list.append(ticket_system_provider_instructions(bundle), [
         "Fetch the issue before acting and reconcile existing labels, comments, and state.",
-        "Use the configured Tango lifecycle labels as external status identifiers.",
-        "Post useful progress and handoff comments, and close the issue only after Tango-authorized merge completion.",
+        "Follow the provider-specific Tango status contract for external status identifiers.",
+        "Post useful progress and handoff comments.",
       ]),
     ),
     with: "\n",
@@ -342,7 +342,11 @@ fn ticket_system_provider_instructions(bundle: Bundle) -> List(String) {
   case bundle.name {
     "github" -> [
       "Use `gh issue view`, `gh issue edit`, `gh issue comment`, and `gh issue close` for issue work.",
-      "Use `gh issue edit --add-label` and `--remove-label` to reconcile the requested Tango lifecycle label.",
+      "Use labels for Tango lifecycle roles except `done`.",
+      "For non-`done` roles, use `gh issue edit --add-label` and `--remove-label` to reconcile only the requested lifecycle label.",
+      "For `done`, close the issue with `gh issue close`; do not create or require a `closed`, `done`, or `tango:done` label.",
+      "Do not close the issue during implementation or review handoff.",
+      "Close the issue only after Tango-authorized merge completion.",
     ]
     "forgejo" -> [
       "Use `fj issue` commands for issue work and inspect `fj issue --help` before provider mutations.",
@@ -389,7 +393,12 @@ fn kind_directory(kind: CapabilityKind) -> String {
   }
 }
 
-fn ticket_system_statuses(_name: String) {
+fn ticket_system_statuses(name: String) {
+  let done_status = case name {
+    "github" -> "closed"
+    _ -> "tango:done"
+  }
+
   dict.from_list([
     #("backlog", "tango:backlog"),
     #("todo", "tango:todo"),
@@ -397,7 +406,7 @@ fn ticket_system_statuses(_name: String) {
     #("human_review", "tango:human-review"),
     #("merging", "tango:merging"),
     #("blocked", "tango:blocked"),
-    #("done", "tango:done"),
+    #("done", done_status),
     #("wont_do", "tango:wont-do"),
   ])
 }

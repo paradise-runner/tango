@@ -699,15 +699,19 @@ to an externally observable status before setting `status_map_validated = true`.
 Ticket onboarding rejects unvalidated maps before it asks the configured
 registry adapter for external status names.
 
-GitHub and Forgejo are label-backed in the MVP: the stable external status ID is
-the label name after provider validation. GitHub discovery uses `gh label list
---repo <owner/repo> --json name`, so `discover` can list repository labels.
-Forgejo's MVP CLI integration does not expose a repository label-list command;
-Forgejo `discover` and `validate` therefore verify the configured labels with
-`fj --style minimal issue search --repo <owner/repo> --labels <label> --state
-all` and report the configured labels that the provider command accepts. Future
-ticket systems with first-class workflow statuses should implement discovery and
-validation against stable workflow-status IDs, not label display names.
+Forgejo is label-backed in the MVP: the stable external status ID is the label
+name after provider validation. GitHub is label-backed for every lifecycle role
+except `done`; the GitHub `done` role maps to the issue's closed state with the
+stable external status ID `closed`, not to a `done`, `closed`, or `tango:done`
+label. GitHub discovery uses `gh label list --repo <owner/repo> --json name` and
+adds the synthetic `closed` status for the issue state, so `discover` can list
+repository labels plus the close-backed completion status. Forgejo's MVP CLI
+integration does not expose a repository label-list command; Forgejo `discover`
+and `validate` therefore verify the configured labels with `fj --style minimal
+issue search --repo <owner/repo> --labels <label> --state all` and report the
+configured labels that the provider command accepts. Future ticket systems with
+first-class workflow statuses should implement discovery and validation against
+stable workflow-status IDs, not label display names.
 
 Each stored profile has a schema version and content digest. Every ticket pins the selected profile digest during onboarding, and every `RunAttempt` records that digest and its effective capability list. Later attempts continue using the pinned digest until an operator explicitly upgrades the ticket's profile.
 

@@ -201,8 +201,10 @@ This tracker lists the remaining work from [SPEC.md](SPEC.md) and
     crash map to retry classes, maximum attempts, and exponential backoff.
   - Add recovery tests proving a killed or crashed worker cannot leave a
     permanent scheduler claim or silently running child process.
-- [ ] Explore status-map UX and provider semantics before resuming automatic
+- [x] Explore status-map UX and provider semantics before resuming automatic
   lifecycle-label management.
+  - GitHub uses labels for every lifecycle role except `done`; `done` maps to
+    the closed issue state with stable ID `closed`.
 
 ## Accepted MVP Risks
 

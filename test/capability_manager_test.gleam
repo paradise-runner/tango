@@ -201,6 +201,20 @@ pub fn ticket_system_install_is_independent_from_forge_config_test() {
   |> should.equal(False)
   dict.get(registry.statuses, "todo")
   |> should.equal(Ok("tango:todo"))
+  dict.get(registry.statuses, "done")
+  |> should.equal(Ok("closed"))
+  let assert Ok(skill) = file.read(installed.skill_path)
+  skill
+  |> string.contains("Use labels for Tango lifecycle roles except `done`.")
+  |> should.be_true()
+  skill
+  |> string.contains("For `done`, close the issue with `gh issue close`")
+  |> should.be_true()
+  skill
+  |> string.contains(
+    "Do not close the issue during implementation or review handoff.",
+  )
+  |> should.be_true()
   updated.forges
   |> dict.get("github")
   |> should.be_error()

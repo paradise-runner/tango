@@ -233,11 +233,12 @@ status-map command that can display the current map, set individual
 lifecycle-role mappings, discover externally observable statuses where the
 provider supports discovery, and persist a validated map. Mutating a mapped role
 MUST clear the validation marker until validation succeeds again. Label-backed
-systems such as GitHub and Forgejo MUST treat label names as external status
-IDs only after Tango validates them against the provider; configured defaults or
-operator-entered names are not evidence that the labels exist. Providers with
-first-class workflow statuses SHOULD validate against stable workflow status IDs
-rather than labels.
+roles MUST treat label names as external status IDs only after Tango validates
+them against the provider; configured defaults or operator-entered names are not
+evidence that the labels exist. For GitHub, non-`done` lifecycle roles are
+label-backed, but the `done` role MUST map to the issue's closed state rather
+than to a label. Providers with first-class workflow statuses SHOULD validate
+against stable workflow status IDs rather than labels.
 
 Before creating or changing an external ticket, comment, branch, pull request, or merge, an agent SHOULD inspect the current external state and reconcile it with the requested outcome. Retries MUST instruct the agent to discover and continue prior external work rather than blindly creating replacements.
 
@@ -661,7 +662,7 @@ Rules:
 
 - `done` MUST only be reached after a human invokes `tango review merge` and the resulting merge session records a successful merge record.
 - For a no-code task, `tango review merge` approves an empty commit and pull-request set and starts a completion session that closes the external ticket when present and records an empty successful merge record.
-- Completion SHOULD instruct the agent to update external ticket state when its capability profile supports that operation.
+- Completion SHOULD instruct the agent to update external ticket state when its capability profile supports that operation. For GitHub, this means closing the issue; a `done` or `closed` label is not sufficient evidence of completion.
 
 ## 8. Prompt Envelope Contract
 

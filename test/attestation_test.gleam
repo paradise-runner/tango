@@ -94,6 +94,43 @@ pub fn pull_request_attestation_rejects_unmerged_or_wrong_head_test() {
   )
 }
 
+pub fn pull_request_attestation_accepts_github_owner_repo_shorthand_test() {
+  let request =
+    adapter.PullRequestRequest(
+      ..pull_request_request(False),
+      repository: repo.RepoBinding(
+        ..repository(),
+        location: "paradise-runner/tango",
+      ),
+      pull_request_ref: "https://github.com/paradise-runner/tango/pull/7",
+      expected_source_branch: Some("ticket-1781639616139261084-1-126883838"),
+      expected_head_commit_id: "a7a487b7a064ba61a183a0db7cb6f991d203f659",
+    )
+  let forge_adapter =
+    adapter.ForgeAdapter(
+      read: fn(request) {
+        Ok(adapter.PullRequestSnapshot(
+          pull_request_ref: request.pull_request_ref,
+          repository_location: "https://github.com/paradise-runner/tango",
+          source_branch: "ticket-1781639616139261084-1-126883838",
+          target_branch: "main",
+          head_commit_id: "a7a487b7a064ba61a183a0db7cb6f991d203f659",
+          state: adapter.Open,
+        ))
+      },
+      read_comments: fn(request) {
+        Ok(adapter.PullRequestCommentsSnapshot(
+          pull_request_ref: request.pull_request_ref,
+          comments: [],
+          final_comment_count: 0,
+        ))
+      },
+    )
+
+  adapter.attest_pull_request(forge_adapter, request)
+  |> should.be_ok()
+}
+
 pub fn github_configured_adapter_parses_structured_read_responses_test() {
   let adapters =
     configured.with_runner(fn(command, args, cwd) {
@@ -121,6 +158,74 @@ pub fn github_configured_adapter_parses_structured_read_responses_test() {
       ),
     )
   adapter.attest_ticket(adapters.ticket_system, request)
+  |> should.be_ok()
+}
+
+pub fn github_done_attestation_uses_closed_issue_state_not_label_test() {
+  let request =
+    adapter.TicketRequest(
+      ..ticket_request(),
+      binding: registry_status.RegistryBinding(
+        ..fixtures.registry_binding(),
+        registry_name: "github",
+        cli_command: "gh",
+      ),
+      expected_status: registry_status.ExternalStatus(
+        id: "closed",
+        name: "Closed issue state",
+      ),
+      require_comment: False,
+    )
+  let open_issue_with_closed_label =
+    configured.with_runner(fn(_, args, cwd) {
+      cwd
+      |> should.equal(None)
+      case args {
+        ["issue", "view", "TANGO-1", ..] ->
+          Ok(process.CommandResult(
+            exit_code: 0,
+            output: "{\"body\":\"description\",\"comments\":[],\"labels\":[{\"name\":\"closed\"}],\"state\":\"OPEN\",\"url\":\"https://github.com/example/tango/issues/1\"}",
+          ))
+        _ -> panic as "unexpected GitHub attestation command"
+      }
+    })
+
+  adapter.attest_ticket(open_issue_with_closed_label.ticket_system, request)
+  |> should.equal(
+    Error(adapter.TicketStatusMismatch(expected: "closed", observed: [])),
+  )
+}
+
+pub fn github_done_attestation_accepts_closed_issue_without_done_label_test() {
+  let request =
+    adapter.TicketRequest(
+      ..ticket_request(),
+      binding: registry_status.RegistryBinding(
+        ..fixtures.registry_binding(),
+        registry_name: "github",
+        cli_command: "gh",
+      ),
+      expected_status: registry_status.ExternalStatus(
+        id: "closed",
+        name: "Closed issue state",
+      ),
+      require_comment: False,
+    )
+  let closed_issue =
+    configured.with_runner(fn(_, args, cwd) {
+      cwd
+      |> should.equal(None)
+      case args {
+        ["issue", "view", "TANGO-1", ..] ->
+          Ok(process.CommandResult(
+            exit_code: 0,
+            output: "{\"body\":\"description\",\"comments\":[],\"labels\":[],\"state\":\"CLOSED\",\"url\":\"https://github.com/example/tango/issues/1\"}",
+          ))
+        _ -> panic as "unexpected GitHub attestation command"
+      }
+    })
+
+  adapter.attest_ticket(closed_issue.ticket_system, request)
   |> should.be_ok()
 }
 

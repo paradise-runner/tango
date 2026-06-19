@@ -166,8 +166,11 @@ mise exec gleam@latest -- gleam run -- review list
 
 ```sh
 mise exec gleam@latest -- gleam run -- review show <ticket-id>
-mise exec gleam@latest -- gleam run -- review merge <ticket-id>
+mise exec gleam@latest -- gleam run -- review merge <ticket-ref>
 ```
+
+`<ticket-ref>` may be the internal Tango ticket id, the identifier shown by
+`ticket list`, or the external ticket reference such as a GitHub issue URL.
 
 6. Keep `tango run` active until the merge worker finishes and the ticket reaches `Done`. Confirm with:
 

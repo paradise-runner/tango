@@ -361,12 +361,18 @@ fn github_ticket_decoder() -> decode.Decoder(GithubTicket) {
   )
   use labels <- decode.field("labels", decode.list(of: github_label_decoder()))
   use state <- decode.field("state", decode.string)
-  decode.success(
-    GithubTicket(body: body, comments: comments, status_ids: [
-      string.lowercase(state),
-      ..labels
-    ]),
-  )
+  decode.success(GithubTicket(
+    body: body,
+    comments: comments,
+    status_ids: github_status_ids(state, labels),
+  ))
+}
+
+fn github_status_ids(state: String, labels: List(String)) -> List(String) {
+  case string.lowercase(state) {
+    "closed" -> ["closed"]
+    _ -> labels |> list.filter(fn(label) { label != "closed" })
+  }
 }
 
 fn github_comment_decoder() -> decode.Decoder(String) {

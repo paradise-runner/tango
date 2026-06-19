@@ -150,7 +150,9 @@ pub fn automatch(
   use discovered <- result.try(discover(operator_config, name, repository, run))
   let attempts =
     config.required_status_roles()
-    |> list.map(fn(role) { #(role, automatch_candidates(role, discovered)) })
+    |> list.map(fn(role) {
+      #(role, automatch_candidates_for(name, role, discovered))
+    })
 
   let matched =
     attempts
@@ -239,6 +241,7 @@ fn discover_github(
     ]),
   )
   json.parse(response.output, github_labels_decoder())
+  |> result.map(with_github_closed_status)
   |> result.map(sort_statuses)
   |> result.map_error(fn(error) {
     InvalidDiscovery("invalid GitHub label response: " <> string.inspect(error))
@@ -327,6 +330,16 @@ fn sort_statuses(
   |> list.sort(fn(left, right) { string.compare(left.id, right.id) })
 }
 
+fn with_github_closed_status(
+  statuses: List(registry_status.ExternalStatus),
+) -> List(registry_status.ExternalStatus) {
+  [
+    registry_status.ExternalStatus(id: "closed", name: "Closed issue state"),
+    ..statuses
+    |> list.filter(fn(status) { status.id != "closed" })
+  ]
+}
+
 fn dedupe_statuses(
   statuses: List(registry_status.ExternalStatus),
 ) -> List(registry_status.ExternalStatus) {
@@ -338,6 +351,20 @@ fn dedupe_statuses(
       False -> list.append(acc, [status])
     }
   })
+}
+
+fn automatch_candidates_for(
+  provider: String,
+  role: String,
+  statuses: List(registry_status.ExternalStatus),
+) -> List(registry_status.ExternalStatus) {
+  case provider, role {
+    "github", "done" ->
+      statuses
+      |> list.filter(fn(status) { status.id == "closed" })
+      |> sort_statuses
+    _, _ -> automatch_candidates(role, statuses)
+  }
 }
 
 fn automatch_candidates(

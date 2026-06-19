@@ -49,6 +49,7 @@ pub fn github_discover_lists_repository_labels_test() {
   )
   |> should.equal(
     Ok([
+      registry_status.ExternalStatus(id: "closed", name: "Closed issue state"),
       registry_status.ExternalStatus(id: "done", name: "done"),
       registry_status.ExternalStatus(id: "todo", name: "todo"),
     ]),
@@ -65,7 +66,7 @@ pub fn validate_marks_complete_github_mapping_validated_test() {
           config.RegistryConfig(
             cli: "gh",
             skill: "github-ticket-system",
-            statuses: statuses(),
+            statuses: github_statuses_done_closed(),
             status_map_validated: False,
           ),
         ),
@@ -78,7 +79,10 @@ pub fn validate_marks_complete_github_mapping_validated_test() {
       "github",
       Some("example/tango"),
       fn(_, _) {
-        Ok(process.CommandResult(exit_code: 0, output: github_labels()))
+        Ok(process.CommandResult(
+          exit_code: 0,
+          output: github_labels_without_done(),
+        ))
       },
     )
 
@@ -206,7 +210,7 @@ pub fn automatch_persists_unambiguous_matches_and_requires_validation_test() {
     #("human_review", "status-review"),
     #("merging", "status-review"),
     #("blocked", "status-blocked"),
-    #("done", "status-done"),
+    #("done", "closed"),
     #("wont_do", "status-canceled"),
   ])
   view.unmatched_roles
@@ -218,12 +222,12 @@ pub fn automatch_persists_unambiguous_matches_and_requires_validation_test() {
   registry.status_map_validated
   |> should.equal(False)
   dict.get(registry.statuses, "done")
-  |> should.equal(Ok("status-done"))
+  |> should.equal(Ok("closed"))
   dict.get(registry.statuses, "merging")
   |> should.equal(Ok("status-review"))
 }
 
-pub fn automatch_reports_ambiguous_and_unmatched_roles_test() {
+pub fn automatch_prefers_closed_for_github_done_status_test() {
   let operator_config =
     config.Config(
       ..config.defaults("/tmp/tango", None),
@@ -254,9 +258,9 @@ pub fn automatch_reports_ambiguous_and_unmatched_roles_test() {
     )
 
   view.matched
-  |> should.equal([#("todo", "todo")])
+  |> should.equal([#("todo", "todo"), #("done", "closed")])
   view.ambiguous_roles
-  |> should.equal([#("done", ["closed", "done"])])
+  |> should.equal([])
   view.unmatched_roles
   |> should.equal([
     "backlog",
@@ -271,7 +275,7 @@ pub fn automatch_reports_ambiguous_and_unmatched_roles_test() {
   dict.get(registry.statuses, "todo")
   |> should.equal(Ok("todo"))
   dict.get(registry.statuses, "done")
-  |> should.be_error()
+  |> should.equal(Ok("closed"))
 }
 
 pub fn set_marks_existing_mapping_unvalidated_test() {
@@ -389,6 +393,19 @@ fn statuses() {
   ])
 }
 
-fn github_labels() -> String {
-  "[{\"name\":\"status-backlog\"},{\"name\":\"status-todo\"},{\"name\":\"status-active\"},{\"name\":\"status-review\"},{\"name\":\"status-blocked\"},{\"name\":\"status-done\"},{\"name\":\"status-canceled\"}]"
+fn github_statuses_done_closed() {
+  dict.from_list([
+    #("backlog", "status-backlog"),
+    #("todo", "status-todo"),
+    #("in_progress", "status-active"),
+    #("human_review", "status-review"),
+    #("merging", "status-review"),
+    #("blocked", "status-blocked"),
+    #("done", "closed"),
+    #("wont_do", "status-canceled"),
+  ])
+}
+
+fn github_labels_without_done() -> String {
+  "[{\"name\":\"status-backlog\"},{\"name\":\"status-todo\"},{\"name\":\"status-active\"},{\"name\":\"status-review\"},{\"name\":\"status-blocked\"},{\"name\":\"status-canceled\"}]"
 }
