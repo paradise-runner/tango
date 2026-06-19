@@ -21,6 +21,16 @@ pub type RunStatus {
   Canceled
 }
 
+pub type RunUsage {
+  RunUsage(
+    input_tokens: Int,
+    cached_input_tokens: Int,
+    output_tokens: Int,
+    reasoning_output_tokens: Int,
+    total_tokens: Int,
+  )
+}
+
 pub type RunAttempt {
   RunAttempt(
     id: String,
@@ -38,6 +48,7 @@ pub type RunAttempt {
     started_at: String,
     ended_at: Option(String),
     status: RunStatus,
+    usage: Option(RunUsage),
     error: Option(String),
   )
 }

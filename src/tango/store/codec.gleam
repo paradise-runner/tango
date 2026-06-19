@@ -200,6 +200,7 @@ pub fn encode_run(run: run.RunAttempt) -> String {
     #("started_at", json.string(run.started_at)),
     #("ended_at", json.nullable(run.ended_at, json.string)),
     #("status", json.string(run_status_to_string(run.status))),
+    #("usage", json.nullable(run.usage, encode_run_usage)),
     #("error", json.nullable(run.error, json.string)),
   ])
   |> json.to_string
@@ -369,6 +370,16 @@ fn encode_review_cursor(
     #("pull_request_ref", json.string(cursor.pull_request_ref)),
     #("comment_count", json.int(cursor.comment_count)),
     #("observed_at", json.string(cursor.observed_at)),
+  ])
+}
+
+fn encode_run_usage(usage: run.RunUsage) -> json.Json {
+  json.object([
+    #("input_tokens", json.int(usage.input_tokens)),
+    #("cached_input_tokens", json.int(usage.cached_input_tokens)),
+    #("output_tokens", json.int(usage.output_tokens)),
+    #("reasoning_output_tokens", json.int(usage.reasoning_output_tokens)),
+    #("total_tokens", json.int(usage.total_tokens)),
   ])
 }
 
@@ -999,6 +1010,11 @@ fn run_decoder() -> decode.Decoder(run.RunAttempt) {
   use started_at <- decode.field("started_at", decode.string)
   use ended_at <- decode.field("ended_at", decode.optional(decode.string))
   use status <- decode.field("status", decode.string)
+  use usage <- decode.optional_field(
+    "usage",
+    None,
+    decode.optional(run_usage_decoder()),
+  )
   use error <- decode.field("error", decode.optional(decode.string))
 
   case
@@ -1025,6 +1041,7 @@ fn run_decoder() -> decode.Decoder(run.RunAttempt) {
           started_at: started_at,
           ended_at: ended_at,
           status: status,
+          usage: usage,
           error: error,
         )
       case run.validate(attempt) {
@@ -1049,6 +1066,24 @@ fn stage_decoder() -> decode.Decoder(lifecycle.Stage) {
         decode.failure(lifecycle.Research, expected: "lifecycle stage")
     }
   })
+}
+
+fn run_usage_decoder() -> decode.Decoder(run.RunUsage) {
+  use input_tokens <- decode.field("input_tokens", decode.int)
+  use cached_input_tokens <- decode.field("cached_input_tokens", decode.int)
+  use output_tokens <- decode.field("output_tokens", decode.int)
+  use reasoning_output_tokens <- decode.field(
+    "reasoning_output_tokens",
+    decode.int,
+  )
+  use total_tokens <- decode.field("total_tokens", decode.int)
+  decode.success(run.RunUsage(
+    input_tokens: input_tokens,
+    cached_input_tokens: cached_input_tokens,
+    output_tokens: output_tokens,
+    reasoning_output_tokens: reasoning_output_tokens,
+    total_tokens: total_tokens,
+  ))
 }
 
 fn repo_binding_decoder() -> decode.Decoder(repo.RepoBinding) {
@@ -1308,6 +1343,7 @@ fn invalid_run() -> run.RunAttempt {
     started_at: "",
     ended_at: None,
     status: run.Failed,
+    usage: None,
     error: None,
   )
 }

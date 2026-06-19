@@ -83,7 +83,7 @@ pub fn defaults(state_dir: String, operator_id: Option(String)) -> Config {
       default_model: "",
     ),
     workspace_aicasa: WorkspaceConfig(
-      command: "aicasa",
+      command: "casa",
       root: state_dir <> "/workspaces",
     ),
     capability_profiles: dict.new(),

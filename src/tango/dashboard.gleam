@@ -11,6 +11,7 @@ import tango/domain/review
 import tango/domain/run
 import tango/domain/session
 import tango/domain/ticket
+import tango/run_process
 import tango/store/store
 
 pub type StatusSnapshot {
@@ -50,7 +51,11 @@ pub type ReviewEntry {
 }
 
 pub type ActiveRun {
-  ActiveRun(ticket: ticket.Ticket, attempt: run.RunAttempt)
+  ActiveRun(
+    ticket: ticket.Ticket,
+    attempt: run.RunAttempt,
+    agent_liveness: run_process.AgentLiveness,
+  )
 }
 
 pub type BlockedTicket {
@@ -60,7 +65,7 @@ pub type BlockedTicket {
 pub type DashboardTicket {
   DashboardTicket(
     ticket: ticket.Ticket,
-    active_run: Option(run.RunAttempt),
+    active_run: Option(ActiveRun),
     active_block: Option(block.BlockRecord),
     latest_review: Option(review.ReviewDecision),
   )
@@ -72,10 +77,25 @@ pub fn status_snapshot(
   generated_at: String,
   operator_id: String,
 ) -> Result(StatusSnapshot, store.StoreError) {
+  status_snapshot_with_runtime(backend, state, generated_at, operator_id, None)
+}
+
+pub fn status_snapshot_with_runtime(
+  backend: store.Store(state),
+  state: state,
+  generated_at: String,
+  operator_id: String,
+  runtime_state_dir: Option(String),
+) -> Result(StatusSnapshot, store.StoreError) {
   use tickets <- result.try(backend.list_tickets(state))
   let sorted = sort_tickets(tickets)
   use blocked_tickets <- result.try(blocked_tickets(backend, state, sorted))
-  use active_runs <- result.try(active_runs(backend, state, sorted))
+  use active_runs <- result.try(active_runs(
+    backend,
+    state,
+    sorted,
+    runtime_state_dir,
+  ))
   Ok(StatusSnapshot(
     generated_at: generated_at,
     operator_id: operator_id,
@@ -97,10 +117,36 @@ pub fn dashboard_snapshot(
   generated_at: String,
   operator_id: String,
 ) -> Result(DashboardSnapshot, store.StoreError) {
+  dashboard_snapshot_with_runtime(
+    backend,
+    state,
+    generated_at,
+    operator_id,
+    None,
+  )
+}
+
+pub fn dashboard_snapshot_with_runtime(
+  backend: store.Store(state),
+  state: state,
+  generated_at: String,
+  operator_id: String,
+  runtime_state_dir: Option(String),
+) -> Result(DashboardSnapshot, store.StoreError) {
   use tickets <- result.try(backend.list_tickets(state))
   let sorted = sort_tickets(tickets)
-  use rows <- result.try(dashboard_rows(backend, state, sorted))
-  use active_runs <- result.try(active_runs(backend, state, sorted))
+  use rows <- result.try(dashboard_rows(
+    backend,
+    state,
+    sorted,
+    runtime_state_dir,
+  ))
+  use active_runs <- result.try(active_runs(
+    backend,
+    state,
+    sorted,
+    runtime_state_dir,
+  ))
   Ok(DashboardSnapshot(
     generated_at: generated_at,
     operator_id: operator_id,
@@ -172,6 +218,7 @@ pub fn review_detail(
 }
 
 pub fn render_status(snapshot: StatusSnapshot) -> String {
+  let spinner = spinner_frame(timestamp_frame_index(snapshot.generated_at))
   string.join(
     list.flatten([
       [
@@ -182,7 +229,7 @@ pub fn render_status(snapshot: StatusSnapshot) -> String {
         "awaiting_human_review: "
           <> int.to_string(list.length(snapshot.awaiting_review_tickets)),
         "blocked: " <> int.to_string(list.length(snapshot.blocked_tickets)),
-        "active_runs: " <> int.to_string(list.length(snapshot.active_runs)),
+        "in_flight_runs: " <> int.to_string(list.length(snapshot.active_runs)),
         "",
       ],
       render_ticket_section("queued tickets", snapshot.queued_tickets),
@@ -194,13 +241,21 @@ pub fn render_status(snapshot: StatusSnapshot) -> String {
       [""],
       render_blocked_section(snapshot.blocked_tickets),
       [""],
-      render_active_runs_section(snapshot.active_runs),
+      render_active_runs_section(snapshot.active_runs, spinner),
     ]),
     with: "\n",
   )
 }
 
 pub fn render_dashboard(snapshot: DashboardSnapshot) -> String {
+  render_dashboard_frame(snapshot, timestamp_frame_index(snapshot.generated_at))
+}
+
+pub fn render_dashboard_frame(
+  snapshot: DashboardSnapshot,
+  frame_index: Int,
+) -> String {
+  let spinner = spinner_frame(frame_index)
   string.join(
     list.flatten([
       [
@@ -208,7 +263,7 @@ pub fn render_dashboard(snapshot: DashboardSnapshot) -> String {
         "operator: " <> snapshot.operator_id,
         "generated_at: " <> snapshot.generated_at,
         "tickets: " <> int.to_string(list.length(snapshot.tickets)),
-        "active_runs: " <> int.to_string(list.length(snapshot.active_runs)),
+        "in_flight_runs: " <> int.to_string(list.length(snapshot.active_runs)),
         "",
         "tickets:",
       ],
@@ -216,7 +271,7 @@ pub fn render_dashboard(snapshot: DashboardSnapshot) -> String {
         [] -> ["  (none)"]
         tickets ->
           tickets
-          |> list.map(fn(row) { "  " <> dashboard_ticket_line(row) })
+          |> list.map(fn(row) { "  " <> dashboard_ticket_line(row, spinner) })
       },
     ]),
     with: "\n",
@@ -313,6 +368,7 @@ fn dashboard_rows(
   backend: store.Store(state),
   state: state,
   tickets: List(ticket.Ticket),
+  runtime_state_dir: Option(String),
 ) -> Result(List(DashboardTicket), store.StoreError) {
   tickets
   |> list.fold(Ok([]), fn(acc, item) {
@@ -327,7 +383,7 @@ fn dashboard_rows(
           list.append(rows, [
             DashboardTicket(
               ticket: item,
-              active_run: latest_active_run(runs),
+              active_run: latest_active_run(item, runs, runtime_state_dir),
               active_block: active_block(item, blocks),
               latest_review: latest_review(reviews),
             ),
@@ -369,6 +425,7 @@ fn active_runs(
   backend: store.Store(state),
   state: state,
   tickets: List(ticket.Ticket),
+  runtime_state_dir: Option(String),
 ) -> Result(List(ActiveRun), store.StoreError) {
   tickets
   |> list.fold(Ok([]), fn(acc, item) {
@@ -378,7 +435,13 @@ fn active_runs(
           runs
           |> sort_runs
           |> list.filter(fn(attempt) { run.is_active(attempt.status) })
-          |> list.map(fn(attempt) { ActiveRun(ticket: item, attempt: attempt) })
+          |> list.map(fn(attempt) {
+            ActiveRun(
+              ticket: item,
+              attempt: attempt,
+              agent_liveness: agent_liveness(runtime_state_dir, attempt),
+            )
+          })
         Ok(list.append(rows, next))
       }
       Error(error), _ -> Error(error)
@@ -452,11 +515,35 @@ fn compare_desc_then_id(
   }
 }
 
-fn latest_active_run(runs: List(run.RunAttempt)) -> Option(run.RunAttempt) {
-  runs
-  |> sort_runs
-  |> list.find(fn(attempt) { run.is_active(attempt.status) })
-  |> result_to_option
+fn latest_active_run(
+  item: ticket.Ticket,
+  runs: List(run.RunAttempt),
+  runtime_state_dir: Option(String),
+) -> Option(ActiveRun) {
+  case
+    runs
+    |> sort_runs
+    |> list.find(fn(attempt) { run.is_active(attempt.status) })
+  {
+    Ok(attempt) ->
+      Some(ActiveRun(
+        ticket: item,
+        attempt: attempt,
+        agent_liveness: agent_liveness(runtime_state_dir, attempt),
+      ))
+    Error(_) -> None
+  }
+}
+
+fn agent_liveness(
+  runtime_state_dir: Option(String),
+  attempt: run.RunAttempt,
+) -> run_process.AgentLiveness {
+  case runtime_state_dir {
+    Some(state_dir) ->
+      run_process.liveness(state_dir, attempt.ticket_id, attempt.id)
+    None -> run_process.AgentUnknown
+  }
 }
 
 fn latest_review(
@@ -511,14 +598,20 @@ fn render_blocked_section(entries: List(BlockedTicket)) -> List(String) {
   }
 }
 
-fn render_active_runs_section(entries: List(ActiveRun)) -> List(String) {
+fn render_active_runs_section(
+  entries: List(ActiveRun),
+  spinner: String,
+) -> List(String) {
   case entries {
-    [] -> ["active runs:", "  (none)"]
+    [] -> ["in flight runs:", "  (none)"]
     entries -> [
-      "active runs:",
+      "in flight runs:",
       ..entries
       |> list.map(fn(entry) {
-        "  " <> entry.ticket.identifier <> " | " <> run_line(entry.attempt)
+        "  "
+        <> entry.ticket.identifier
+        <> " | "
+        <> in_flight_run_line(entry, spinner)
       })
     ]
   }
@@ -625,14 +718,14 @@ fn render_merge_history(merges: List(merge.MergeRecord)) -> List(String) {
   }
 }
 
-fn dashboard_ticket_line(row: DashboardTicket) -> String {
+fn dashboard_ticket_line(row: DashboardTicket, spinner: String) -> String {
   row.ticket.identifier
   <> " | "
   <> lifecycle.to_string(row.ticket.state)
   <> " | priority="
   <> optional_int(row.ticket.priority)
-  <> " | active_run="
-  <> maybe_run_summary(row.active_run)
+  <> " | in_flight_run="
+  <> maybe_run_summary(row.active_run, spinner)
   <> " | latest_review="
   <> maybe_review_summary(row.latest_review)
   <> " | block="
@@ -669,8 +762,54 @@ fn run_line(attempt: run.RunAttempt) -> String {
   <> int.to_string(attempt.attempt)
   <> " | session="
   <> attempt.session_id
+  <> " | usage="
+  <> usage_summary(attempt.usage)
   <> " | started_at="
   <> attempt.started_at
+}
+
+fn in_flight_run_line(entry: ActiveRun, spinner: String) -> String {
+  agent_liveness_summary(entry.agent_liveness, spinner)
+  <> " | "
+  <> run_line(entry.attempt)
+}
+
+fn timestamp_frame_index(generated_at: String) -> Int {
+  string.slice(generated_at, at_index: 17, length: 2)
+  |> int.parse
+  |> result.unwrap(0)
+}
+
+fn spinner_frame(frame_index: Int) -> String {
+  case frame_index % 10 {
+    0 -> "[=   ]"
+    1 -> "[==  ]"
+    2 -> "[=== ]"
+    3 -> "[ ===]"
+    4 -> "[  ==]"
+    5 -> "[   =]"
+    6 -> "[  ==]"
+    7 -> "[ ===]"
+    8 -> "[=== ]"
+    _ -> "[==  ]"
+  }
+}
+
+fn usage_summary(usage: Option(run.RunUsage)) -> String {
+  case usage {
+    None -> "-"
+    Some(usage) ->
+      "in="
+      <> int.to_string(usage.input_tokens)
+      <> " cached="
+      <> int.to_string(usage.cached_input_tokens)
+      <> " out="
+      <> int.to_string(usage.output_tokens)
+      <> " reasoning="
+      <> int.to_string(usage.reasoning_output_tokens)
+      <> " total="
+      <> int.to_string(usage.total_tokens)
+  }
 }
 
 fn run_kind_text(kind: run.RunKind) -> String {
@@ -725,11 +864,32 @@ fn block_summary(record: Option(block.BlockRecord)) -> String {
   }
 }
 
-fn maybe_run_summary(value: Option(run.RunAttempt)) -> String {
+fn maybe_run_summary(value: Option(ActiveRun), spinner: String) -> String {
   case value {
     None -> "-"
-    Some(attempt) ->
-      run_kind_text(attempt.kind) <> ":" <> run_status_text(attempt.status)
+    Some(entry) ->
+      agent_liveness_summary(entry.agent_liveness, spinner)
+      <> " "
+      <> run_kind_text(entry.attempt.kind)
+      <> ":"
+      <> run_status_text(entry.attempt.status)
+  }
+}
+
+fn agent_liveness_summary(
+  liveness: run_process.AgentLiveness,
+  spinner: String,
+) -> String {
+  case liveness {
+    run_process.AgentAlive(pid:, started_at: _) ->
+      "agent=alive spinner=" <> spinner <> " pid=" <> int.to_string(pid)
+    run_process.AgentExited(pid:, started_at: _, ended_at:) ->
+      "agent=exited pid=" <> int.to_string(pid) <> " ended_at=" <> ended_at
+    run_process.AgentMissing(pid:, started_at: _) ->
+      "agent=missing pid=" <> int.to_string(pid)
+    run_process.AgentNotStarted -> "agent=not_started"
+    run_process.AgentUnknown -> "agent=unknown"
+    run_process.AgentMarkerInvalid(reason) -> "agent=marker_invalid:" <> reason
   }
 }
 

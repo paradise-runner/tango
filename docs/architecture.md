@@ -25,7 +25,7 @@ Resolved initial decisions:
 - Durable state and managed workspaces live under `~/.tango`.
 - One agent run progresses continuously through research, planning, implementation, and commit creation before human review.
 - Tickets support multiple repository bindings from the start.
-- `aicasa` is the sole external workspace-provisioning dependency and creates one multi-repository workspace per ticket.
+- The Aicasa workspace provider, invoked through the `casa` CLI, is the sole external workspace-provisioning dependency and creates one multi-repository workspace per ticket.
 - Tango has no built-in ticket-provider or forge adapters.
 - Every dispatchable ticket selects an external ticket registry, an operator-approved registry CLI, an agent registry skill, and one MVP-level GitHub or Forgejo binding.
 - Tango manages installation and selection of user-chosen skill/tool capability profiles that let agents fetch and fully manage external tickets and pull requests.
@@ -212,7 +212,7 @@ pub type RegistryStatusRole {
 
 `ForgeBinding` stores one ticket-level forge name, CLI command, and forge skill. The MVP accepts only configured `github` and `forgejo` bindings and requires every repository on the ticket to use that selected forge. Per-repository forge bindings are deferred until mixed-forge tickets are supported.
 
-Onboarding validates explicit repository remote hosts against the selected forge before registry discovery or ticket persistence. GitHub accepts explicit `github.com` remotes; Forgejo rejects `github.com` remotes and accepts other explicit hosts. GitHub `owner/repo` shorthand and full Git clone URLs are eligible workspace sources. Local absolute and relative paths are rejected so aicasa always creates an isolated clone owned by the ticket workspace.
+Onboarding validates explicit repository remote hosts against the selected forge before registry discovery or ticket persistence. GitHub accepts explicit `github.com` remotes; Forgejo rejects `github.com` remotes and accepts other explicit hosts. GitHub `owner/repo` shorthand and full Git clone URLs are eligible workspace sources. Local absolute and relative paths are rejected so `casa` always creates an isolated clone owned by the ticket workspace.
 
 `AgentSession` should model:
 
@@ -466,7 +466,7 @@ a person.
 Execution worker sequence:
 
 1. Load ticket, create or load its main implementation session, and load prior artifacts.
-2. Ask `aicasa` to create or inspect the ticket's multi-repository workspace.
+2. Ask `casa` to create or inspect the ticket's multi-repository workspace.
 3. Create the run workpad and build one autonomous execution prompt envelope.
 4. Launch the assigned local agent through `AgentAdapter`.
 5. Require the agent to fetch the external ticket using the selected capability profile and write a normalized ticket snapshot to the workpad.
@@ -568,7 +568,7 @@ Codex-specific details should live in `tango/agent/codex.gleam`:
 
 Selected initial transport: `codex exec --json`.
 
-The adapter launches each attempt with the inspected `aicasa` workspace as Codex's workspace root:
+The adapter launches each attempt with the inspected `casa` workspace as Codex's workspace root:
 
 ```text
 codex exec --json --cd <ticket-workspace-path> --sandbox workspace-write <prompt>
@@ -612,7 +612,7 @@ The architecture should support both behind the same adapter so this decision do
 
 ## 11. Aicasa Workspace and Git Adapter
 
-The workspace manager uses the external [`aicasa`](https://github.com/paradise-runner/aicasa) CLI for all workspace provisioning. Tango must not implement a second clone or worktree manager.
+The workspace manager uses the external [`aicasa`](https://github.com/paradise-runner/aicasa) project for all workspace provisioning through its `casa` CLI. Tango must not implement a second clone or worktree manager.
 
 Recommended path shape:
 
@@ -627,17 +627,17 @@ Recommended path shape:
   logs/
 ```
 
-Tango sets `AICASA_ROOT=~/.tango/workspaces`, derives a valid single-directory workspace name from the ticket ID, and invokes the `aicasa` binary directly rather than relying on the interactive `aic` shell wrapper:
+Tango sets `AICASA_ROOT=~/.tango/workspaces`, derives a valid single-directory workspace name from the ticket ID, and invokes the `casa` binary directly rather than relying on an interactive shell wrapper:
 
 ```text
-aicasa new <ticket-workspace-name> <repo-source>[,<repo-source>...]
-aicasa add <ticket-workspace-name> <repo-source>[,<repo-source>...]
-aicasa inspect <ticket-workspace-name>
+casa new <ticket-workspace-name> <repo-source>[,<repo-source>...]
+casa add <ticket-workspace-name> <repo-source>[,<repo-source>...]
+casa inspect <ticket-workspace-name>
 ```
 
-At startup, Tango verifies that `aicasa` is installed and that `aicasa inspect` returns supported schema version `1`. The workspace name is a valid slug plus a stable hash of the Tango ticket ID so path derivation is deterministic and collision-resistant. If the workspace already exists, Tango inspects it, uses `aicasa add` for missing bindings, and inspects it again. Tango validates the inspection JSON schema, requires every repository to exist, and maps each inspected repository path back to exactly one repository binding. Because `aicasa` derives checkout directory names from repository source basenames, onboarding must reject bindings that would produce duplicate directory names. The inspected workspace root is the working directory and writable root for every agent attempt on the ticket.
+At startup, Tango verifies that `casa` is installed and that `casa inspect` returns supported schema version `1`. The workspace name is a valid slug plus a stable hash of the Tango ticket ID so path derivation is deterministic and collision-resistant. If the workspace already exists, Tango inspects it, uses `casa add` for missing bindings, and inspects it again. Tango validates the inspection JSON schema, requires every repository to exist, and maps each inspected repository path back to exactly one repository binding. Because Aicasa derives checkout directory names from repository source basenames, onboarding must reject bindings that would produce duplicate directory names. The inspected workspace root is the working directory and writable root for every agent attempt on the ticket.
 
-The MVP supports `checkout_policy = clone` only. Full Git clone URLs and GitHub `owner/repo` shorthand are passed to `aicasa` as clone sources. Local Git paths, `reuse_local`, and worktree attachment must fail onboarding.
+The MVP supports `checkout_policy = clone` only. Full Git clone URLs and GitHub `owner/repo` shorthand are passed to `casa` as clone sources. Local Git paths, `reuse_local`, and worktree attachment must fail onboarding.
 
 Git adapter responsibilities:
 
@@ -869,7 +869,7 @@ transport = "exec"
 default_model = ""
 
 [workspace.aicasa]
-command = "aicasa"
+command = "casa"
 root = "~/.tango/workspaces"
 
 [capability_profiles.default]
@@ -966,7 +966,7 @@ Test layers:
 - fake Git adapter tests for dirty workspace and merge precondition failures;
 - fake read-only attestation adapter contract tests for ticket revisions,
   statuses, pull-request bindings, branches, heads, and merged state;
-- fake `aicasa` adapter tests for workspace creation, inspection, partial-clone recovery with `add`, missing repositories, and duplicate checkout directory names;
+- fake Aicasa adapter tests for `casa` workspace creation, inspection, partial-clone recovery with `add`, missing repositories, and duplicate checkout directory names;
 - fake agent capability tests for ticket fetching, external-state reconciliation, pull-request head changes, comment-count changes, self-comment cursor advancement, and partial multi-repository merges;
 - registry status mapping tests for stable-ID discovery, missing and ambiguous roles, shared external statuses, pinned mappings, and `Failed -> Blocked`;
 - review-watcher tests proving unchanged counts do not start agents, only

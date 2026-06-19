@@ -2,12 +2,14 @@ import gleam/erlang/process
 import gleam/otp/actor
 import gleam/otp/factory_supervisor
 import gleam/otp/supervision
+import gleam/result
 import tango/domain/run
+import tango/runtime
 import tango/store_server
 import tango/worker
 
 pub type WorkerMessage {
-  WorkerExited(ticket_id: String, run_id: String, result: Result(Nil, Nil))
+  WorkerExited(ticket_id: String, run_id: String, result: Result(Nil, String))
 }
 
 pub type WorkerStart(message) {
@@ -55,14 +57,18 @@ fn start_worker(start: WorkerStart(message)) -> actor.StartResult(Nil) {
   let pid =
     process.spawn(fn() {
       let result =
-        worker.execute(
-          store_server.store(),
-          start.store_name,
-          start.state_dir,
-          start.dependencies,
-          start.attempt,
-        )
-        |> collapse_result
+        runtime.run_guarded(fn() {
+          worker.execute(
+            store_server.store(),
+            start.store_name,
+            start.state_dir,
+            start.dependencies,
+            start.attempt,
+          )
+          |> result.map(fn(_) { Nil })
+          |> result.map_error(worker.error_text)
+        })
+        |> flatten_guarded_result
       process.send(
         start.notify,
         start.into_message(WorkerExited(
@@ -75,9 +81,11 @@ fn start_worker(start: WorkerStart(message)) -> actor.StartResult(Nil) {
   Ok(actor.Started(pid: pid, data: Nil))
 }
 
-fn collapse_result(result: Result(a, b)) -> Result(Nil, Nil) {
-  case result {
-    Ok(_) -> Ok(Nil)
-    Error(_) -> Error(Nil)
+fn flatten_guarded_result(
+  guarded: Result(Result(Nil, String), String),
+) -> Result(Nil, String) {
+  case guarded {
+    Ok(result) -> result
+    Error(reason) -> Error("worker crashed: " <> reason)
   }
 }

@@ -8,8 +8,10 @@ import tango/agent/adapter
 import tango/agent/codex
 import tango/attestation/adapter as attestation
 import tango/domain/artifact
+import tango/domain/forge
 import tango/domain/lifecycle
 import tango/domain/merge
+import tango/domain/registry_status
 import tango/domain/repo
 import tango/domain/review
 import tango/domain/review_cursor
@@ -142,6 +144,7 @@ fn execution_run() -> run.RunAttempt {
     started_at: "2026-06-07T00:01:00Z",
     ended_at: None,
     status: run.PreparingWorkspace,
+    usage: None,
     error: None,
   )
 }
@@ -163,6 +166,7 @@ fn review_watch_run() -> run.RunAttempt {
     started_at: "2026-06-07T00:01:00Z",
     ended_at: None,
     status: run.PreparingWorkspace,
+    usage: None,
     error: None,
   )
 }
@@ -204,6 +208,7 @@ fn merge_run() -> run.RunAttempt {
     started_at: "2026-06-07T00:01:00Z",
     ended_at: None,
     status: run.PreparingWorkspace,
+    usage: None,
     error: None,
   )
 }
@@ -239,6 +244,7 @@ fn registry_sync_run() -> run.RunAttempt {
     started_at: "2026-06-07T00:01:00Z",
     ended_at: None,
     status: run.PreparingWorkspace,
+    usage: None,
     error: None,
   )
 }
@@ -320,7 +326,9 @@ pub fn codex_exec_command_uses_workspace_write_and_workpad_test() {
       prompt: "hello",
       workspace_path: "/tmp/workspace",
       workpad_path: "/tmp/workpad",
+      sandbox_paths: [],
       resume_session_id: None,
+      on_process_started: fn(_) { Nil },
     )
 
   codex.command_args(request)
@@ -333,8 +341,45 @@ pub fn codex_exec_command_uses_workspace_write_and_workpad_test() {
     "workspace-write",
     "--add-dir",
     "/tmp/workpad",
+    "--skip-git-repo-check",
     "-c",
     "approval_policy=never",
+    "-c",
+    "sandbox_workspace_write.network_access=true",
+    "hello",
+  ])
+}
+
+pub fn codex_exec_command_adds_sandbox_paths_test() {
+  let request =
+    adapter.AgentRequest(
+      prompt: "hello",
+      workspace_path: "/tmp/workspace",
+      workpad_path: "/tmp/workpad",
+      sandbox_paths: ["/tmp/codex-skills", "/tmp/tango-capabilities"],
+      resume_session_id: None,
+      on_process_started: fn(_) { Nil },
+    )
+
+  codex.command_args(request)
+  |> should.equal([
+    "exec",
+    "--json",
+    "--cd",
+    "/tmp/workspace",
+    "--sandbox",
+    "workspace-write",
+    "--add-dir",
+    "/tmp/workpad",
+    "--add-dir",
+    "/tmp/codex-skills",
+    "--add-dir",
+    "/tmp/tango-capabilities",
+    "--skip-git-repo-check",
+    "-c",
+    "approval_policy=never",
+    "-c",
+    "sandbox_workspace_write.network_access=true",
     "hello",
   ])
 }
@@ -345,11 +390,42 @@ pub fn codex_resume_command_uses_resume_session_id_test() {
       prompt: "resume",
       workspace_path: "/tmp/workspace",
       workpad_path: "/tmp/workpad",
+      sandbox_paths: ["/tmp/codex-skills"],
       resume_session_id: Some("session-123"),
+      on_process_started: fn(_) { Nil },
     )
 
   codex.command_args(request)
-  |> should.equal(["exec", "resume", "session-123", "--json", "resume"])
+  |> should.equal([
+    "exec",
+    "resume",
+    "session-123",
+    "--json",
+    "--skip-git-repo-check",
+    "-c",
+    "approval_policy=never",
+    "-c",
+    "sandbox_workspace_write.network_access=true",
+    "resume",
+  ])
+}
+
+pub fn codex_json_output_extracts_latest_usage_test() {
+  let output =
+    "{\"type\":\"session.started\",\"thread_id\":\"thread-1\"}\n"
+    <> "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":10,\"cached_input_tokens\":4,\"output_tokens\":5,\"reasoning_output_tokens\":2,\"total_tokens\":15}}\n"
+    <> "{\"type\":\"turn.completed\",\"usage\":{\"prompt_tokens\":20,\"cached_tokens\":8,\"completion_tokens\":7,\"reasoning_tokens\":3,\"total_tokens\":27}}"
+
+  codex.extract_usage(output)
+  |> should.equal(
+    Some(run.RunUsage(
+      input_tokens: 20,
+      cached_input_tokens: 8,
+      output_tokens: 7,
+      reasoning_output_tokens: 3,
+      total_tokens: 27,
+    )),
+  )
 }
 
 pub fn aicasa_workspace_name_is_slugged_and_hashed_test() {
@@ -419,8 +495,15 @@ pub fn worker_execute_creates_manifest_and_completes_run_test() {
           write_execution_success_artifacts(request.workpad_path)
         Ok(adapter.AgentResponse(
           exit_code: 0,
-          output: "{\"thread_id\":\"thread-1\"}",
+          output: "{\"thread_id\":\"thread-1\"}\n{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":100,\"cached_input_tokens\":25,\"output_tokens\":20,\"reasoning_output_tokens\":5,\"total_tokens\":120}}",
           runtime_session_id: Some("thread-1"),
+          usage: Some(run.RunUsage(
+            input_tokens: 100,
+            cached_input_tokens: 25,
+            output_tokens: 20,
+            reasoning_output_tokens: 5,
+            total_tokens: 120,
+          )),
         ))
       }),
     )
@@ -432,6 +515,18 @@ pub fn worker_execute_creates_manifest_and_completes_run_test() {
   |> should.equal(None)
   result.run.status
   |> should.equal(run.Succeeded)
+  result.run.usage
+  |> should.equal(
+    Some(run.RunUsage(
+      input_tokens: 100,
+      cached_input_tokens: 25,
+      output_tokens: 20,
+      reasoning_output_tokens: 5,
+      total_tokens: 120,
+    )),
+  )
+  result.run.workspace_path
+  |> should.equal(root <> "/workspace-ticket-1")
   result.ticket.state
   |> should.equal(lifecycle.AwaitingHumanReview)
   file.read(result.workpad_path <> "/manifest.json")
@@ -466,6 +561,73 @@ pub fn worker_execute_creates_manifest_and_completes_run_test() {
   |> list.filter(fn(item) { item.type_ == "ticket.lifecycle_transition" })
   |> list.length
   |> should.equal(4)
+
+  file.remove_tree(root)
+  |> should.be_ok()
+}
+
+pub fn worker_request_exposes_installed_skill_directories_to_agent_sandbox_test() {
+  let assert Ok(root) = file.temporary_directory("tango-worker-skill-sandbox")
+  let ticket_system_skill =
+    root <> "/capabilities/ticket-systems/github/SKILL.md"
+  let forge_skill = root <> "/capabilities/forges/github/SKILL.md"
+  let assert Ok(_) =
+    file.atomic_replace(ticket_system_skill, "# github-ticket-system\n")
+  let assert Ok(_) = file.atomic_replace(forge_skill, "# github-forge\n")
+  let item =
+    ticket.Ticket(
+      ..queued_ticket(),
+      registry_binding: Some(registry_status.RegistryBinding(
+        registry_name: "github",
+        cli_command: "gh",
+        registry_skill: ticket_system_skill,
+        external_ticket_ref: "TANGO-1",
+        pinned_mapping_digest: "sha256:statuses",
+      )),
+      forge_binding: Some(forge.ForgeBinding(
+        forge_name: "github",
+        cli_command: "gh",
+        forge_skill: forge_skill,
+      )),
+    )
+  let backend = memory_store.store()
+  let assert Ok(state) = backend.save_ticket(memory_store.new(), item)
+  let assert Ok(state) = backend.save_session(state, main_session())
+  let deps =
+    worker.WorkerDependencies(
+      workspace: workspace.WorkspaceAdapter(ensure: fn(_, item) {
+        Ok(
+          workspace.Workspace(
+            root_path: root <> "/workspace-" <> item.id,
+            repos: [],
+          ),
+        )
+      }),
+      git: git.passthrough(),
+      attestation: attestation.passthrough(),
+      agent: adapter.AgentAdapter(run: fn(request) {
+        request.sandbox_paths
+        |> list.contains(root <> "/capabilities/ticket-systems/github")
+        |> should.be_true()
+        request.sandbox_paths
+        |> list.contains(root <> "/capabilities/forges/github")
+        |> should.be_true()
+        let assert Ok(_) =
+          write_execution_success_artifacts(request.workpad_path)
+        Ok(adapter.AgentResponse(
+          exit_code: 0,
+          output: "{}",
+          runtime_session_id: None,
+          usage: None,
+        ))
+      }),
+    )
+
+  let assert Ok(result) =
+    worker.execute(backend, state, root, deps, execution_run())
+
+  result.run.status
+  |> should.equal(run.Succeeded)
 
   file.remove_tree(root)
   |> should.be_ok()
@@ -514,6 +676,7 @@ pub fn execution_promotion_does_not_require_external_comments_test() {
           exit_code: 0,
           output: "{\"thread_id\":\"thread-1\"}",
           runtime_session_id: Some("thread-1"),
+          usage: None,
         ))
       }),
     )
@@ -565,6 +728,7 @@ pub fn registry_sync_rejects_unverified_observed_status_test() {
           exit_code: 0,
           output: "registry remained stale",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -617,6 +781,7 @@ pub fn registry_sync_mirrors_failed_as_blocked_test() {
           exit_code: 0,
           output: "failed mirrored as blocked",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -659,6 +824,7 @@ pub fn worker_execute_fails_without_result_json_test() {
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -710,6 +876,7 @@ pub fn worker_execute_does_not_partially_promote_malformed_artifacts_test() {
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -758,6 +925,7 @@ pub fn worker_execute_rejects_disallowed_workpad_file_test() {
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -816,6 +984,7 @@ pub fn review_watch_advances_cursor_and_requests_changes_test() {
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -950,6 +1119,7 @@ pub fn merge_retry_accepts_completed_already_merged_pr_and_marks_ticket_done_tes
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -1027,6 +1197,7 @@ pub fn partial_multi_repo_merge_persists_progress_and_requires_reapproval_test()
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -1072,6 +1243,7 @@ pub fn execution_dirty_worktree_fails_before_artifact_promotion_test() {
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -1113,6 +1285,7 @@ pub fn execution_rejects_reported_pull_request_head_that_differs_from_commit_tes
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -1155,6 +1328,7 @@ pub fn execution_rejects_no_code_when_repository_changed_test() {
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -1196,6 +1370,7 @@ pub fn execution_rejects_omitted_modified_repository_test() {
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -1256,6 +1431,7 @@ pub fn execution_rejects_forge_attestation_drift_before_promotion_test() {
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -1332,6 +1508,7 @@ pub fn merge_completion_rejects_unmerged_forge_attestation_test() {
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -1485,6 +1662,7 @@ pub fn merge_blocked_result_resumes_at_human_review_test() {
           exit_code: 0,
           output: "{}",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -1573,6 +1751,7 @@ fn review_watch_dependencies(
         exit_code: 0,
         output: "{}",
         runtime_session_id: None,
+        usage: None,
       ))
     }),
   )
@@ -1611,6 +1790,7 @@ pub fn registry_sync_run_updates_observed_external_status_test() {
           exit_code: 0,
           output: "registry synchronized",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )

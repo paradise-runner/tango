@@ -24,8 +24,17 @@ pub fn stable_hash(value: String) -> String
 @external(erlang, "tango_store_ffi", "sha256")
 pub fn sha256(value: String) -> String
 
+@external(erlang, "tango_store_ffi", "run_guarded")
+pub fn run_guarded(work: fn() -> value) -> Result(value, String)
+
+@external(erlang, "tango_store_ffi", "is_pid_alive")
+pub fn is_pid_alive(pid: Int) -> Bool
+
 @external(erlang, "tango_store_ffi", "modified_at_seconds")
 pub fn modified_at_seconds(path: String) -> Result(Int, String)
 
 @external(erlang, "tango_store_ffi", "confirm")
 pub fn confirm(prompt: String) -> Bool
+
+@external(erlang, "tango_store_ffi", "halt")
+pub fn halt(status: Int) -> Nil

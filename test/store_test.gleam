@@ -153,6 +153,13 @@ fn sample_run() -> run.RunAttempt {
     started_at: "2026-06-07T00:04:00Z",
     ended_at: None,
     status: run.PreparingWorkspace,
+    usage: Some(run.RunUsage(
+      input_tokens: 100,
+      cached_input_tokens: 40,
+      output_tokens: 25,
+      reasoning_output_tokens: 5,
+      total_tokens: 125,
+    )),
     error: None,
   )
 }
@@ -240,6 +247,18 @@ pub fn run_codec_round_trips_test() {
   |> codec.encode_run
   |> codec.decode_run
   |> should.equal(Ok(sample_run()))
+}
+
+pub fn run_codec_defaults_legacy_usage_to_none_test() {
+  let expected = run.RunAttempt(..sample_run(), usage: None)
+  let legacy =
+    expected
+    |> codec.encode_run
+    |> string.replace(",\"usage\":null", "")
+
+  legacy
+  |> codec.decode_run
+  |> should.equal(Ok(expected))
 }
 
 pub fn review_codec_round_trips_test() {

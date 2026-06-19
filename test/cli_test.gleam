@@ -8,6 +8,7 @@ import tango/app/onboarding
 import tango/capability/manager
 import tango/cli
 import tango/config
+import tango/dashboard
 import tango/domain/artifact
 import tango/domain/block
 import tango/domain/event
@@ -18,6 +19,7 @@ import tango/domain/review
 import tango/domain/run
 import tango/domain/session
 import tango/domain/ticket
+import tango/run_process
 import tango/store/file
 import tango/store/json_store
 
@@ -71,6 +73,9 @@ pub fn parse_supported_commands_test() {
 
   cli.parse(["dashboard"])
   |> should.equal(Ok(cli.Dashboard))
+
+  cli.parse(["dashboard", "--once"])
+  |> should.equal(Ok(cli.DashboardOnce))
 
   cli.parse(["capability", "list"])
   |> should.equal(Ok(cli.CapabilityList))
@@ -522,6 +527,7 @@ fn active_run() -> run.RunAttempt {
     started_at: "2026-06-07T00:05:00Z",
     ended_at: None,
     status: run.Streaming,
+    usage: None,
     error: None,
   )
 }
@@ -831,15 +837,15 @@ pub fn status_reports_queue_review_blocked_and_active_runs_test() {
     <> "queued: 1\n"
     <> "awaiting_human_review: 1\n"
     <> "blocked: 1\n"
-    <> "active_runs: 1\n\n"
+    <> "in_flight_runs: 1\n\n"
     <> "queued tickets:\n"
     <> "  TANGO-1 | queued | priority=1 | external_ref=TANGO-1\n\n"
     <> "awaiting human review:\n"
     <> "  TANGO-2 | awaiting_human_review | priority=1 | external_ref=TANGO-1\n\n"
     <> "blocked tickets:\n"
     <> "  TANGO-3 | block-3:waiting on ops->awaiting_human_review\n\n"
-    <> "active runs:\n"
-    <> "  TANGO-1 | run-1 | execution | streaming | attempt=1 | session=session-1 | started_at=2026-06-07T00:05:00Z",
+    <> "in flight runs:\n"
+    <> "  TANGO-1 | agent=not_started | run-1 | execution | streaming | attempt=1 | session=session-1 | usage=- | started_at=2026-06-07T00:05:00Z",
   )
 
   file.remove_tree(root)
@@ -879,7 +885,7 @@ pub fn dashboard_lists_ticket_rows_with_operator_state_test() {
 
   let assert Ok(output) =
     cli.run_in(
-      cli.Dashboard,
+      cli.DashboardOnce,
       root,
       "local:test",
       "2026-06-12T12:00:00Z",
@@ -892,14 +898,57 @@ pub fn dashboard_lists_ticket_rows_with_operator_state_test() {
     <> "operator: local:test\n"
     <> "generated_at: 2026-06-12T12:00:00Z\n"
     <> "tickets: 2\n"
-    <> "active_runs: 1\n\n"
+    <> "in_flight_runs: 1\n\n"
     <> "tickets:\n"
-    <> "  TANGO-1 | queued | priority=1 | active_run=execution:streaming | latest_review=- | block=-\n"
-    <> "  TANGO-2 | awaiting_human_review | priority=1 | active_run=- | latest_review=defer@2026-06-07T00:07:00Z | block=-",
+    <> "  TANGO-1 | queued | priority=1 | in_flight_run=agent=not_started execution:streaming | latest_review=- | block=-\n"
+    <> "  TANGO-2 | awaiting_human_review | priority=1 | in_flight_run=- | latest_review=defer@2026-06-07T00:07:00Z | block=-",
   )
 
   file.remove_tree(root)
   |> should.be_ok()
+}
+
+pub fn dashboard_animation_frame_advances_spinner_test() {
+  let queued = ticket.Ticket(..onboarded_ticket(), state: lifecycle.Queued)
+  let snapshot =
+    dashboard.DashboardSnapshot(
+      generated_at: "2026-06-12T12:00:00Z",
+      operator_id: "local:test",
+      tickets: [
+        dashboard.DashboardTicket(
+          ticket: queued,
+          active_run: Some(dashboard.ActiveRun(
+            ticket: queued,
+            attempt: active_run(),
+            agent_liveness: run_process.AgentAlive(
+              pid: 123,
+              started_at: "2026-06-07T00:05:01Z",
+            ),
+          )),
+          active_block: None,
+          latest_review: None,
+        ),
+      ],
+      active_runs: [],
+    )
+
+  let first = dashboard.render_dashboard_frame(snapshot, 0)
+  let later = dashboard.render_dashboard_frame(snapshot, 3)
+
+  first
+  |> string.contains(
+    "in_flight_run=agent=alive spinner=[=   ] pid=123 execution:streaming",
+  )
+  |> should.be_true()
+
+  later
+  |> string.contains(
+    "in_flight_run=agent=alive spinner=[ ===] pid=123 execution:streaming",
+  )
+  |> should.be_true()
+
+  first
+  |> should.not_equal(later)
 }
 
 pub fn ticket_list_show_and_review_surfaces_render_history_test() {
@@ -997,7 +1046,7 @@ pub fn ticket_list_show_and_review_surfaces_render_history_test() {
     <> "sessions:\n"
     <> "  session-1 | main/implementation | runs=1 | runtime_session_id=runtime-1\n\n"
     <> "runs:\n"
-    <> "  run-1 | execution | streaming | attempt=1 | session=session-1 | started_at=2026-06-07T00:05:00Z\n\n"
+    <> "  run-1 | execution | streaming | attempt=1 | session=session-1 | usage=- | started_at=2026-06-07T00:05:00Z\n\n"
     <> "blocks:\n"
     <> "  (none)\n\n"
     <> "reviews:\n"

@@ -123,7 +123,7 @@ This tracker lists the remaining work from [SPEC.md](SPEC.md) and
     - [x] Reject capability profiles that do not expose the selected registry
       skill and execution CLI.
     - [x] Add lifecycle overrides and forge remote compatibility checks.
-    - [x] Reject local repository paths and accept aicasa clone sources.
+    - [x] Reject local repository paths and accept `casa` clone sources.
     - [x] Add `tango ticket create --queue`.
   - [x] Implement independent built-in GitHub and Forgejo ticket-system and
     forge capability install/profile persistence under `~/.tango/capabilities`,
@@ -134,6 +134,8 @@ This tracker lists the remaining work from [SPEC.md](SPEC.md) and
     `tango capability install <ticket-system|forge> <github|forgejo>
     [--skill-only]`, and `tango capability profile create <name>
     --ticket-system <name> --forge <name>`.
+  - [x] Expose installed ticket-system/forge skills and operator Codex skill
+    cache roots to fresh sandboxed agent runs.
 - [x] Add ticket-system status-map management.
   - Add a provider-aware command such as
     `tango ticket-system status-map <name> ...` to discover, display, validate,
@@ -179,7 +181,7 @@ This tracker lists the remaining work from [SPEC.md](SPEC.md) and
 - [ ] Fix command and adapter correctness gaps.
   - Return non-zero process exit status on usage, config, store, command,
     onboarding, and runtime failures.
-  - Tighten `aicasa inspect` parsing beyond the current narrow happy path.
+  - [x] Tighten `casa inspect` parsing beyond the current narrow happy path.
   - Replace best-effort Codex runtime-session extraction with a more durable
     protocol/event integration.
 - [ ] Fill in missing lifecycle event coverage.
@@ -225,7 +227,7 @@ This tracker lists the remaining work from [SPEC.md](SPEC.md) and
   - Add a stable `tango logs --ticket <id> [--run <id>]` surface, with optional
     terminal hyperlinks to the backing structured log.
 - [ ] Broaden integration coverage once the MVP contract above is closed.
-  - Add wider integration tests around Codex, `aicasa`, workpad validation,
+  - Add wider integration tests around Codex, `casa`, workpad validation,
     and artifact promotion.
 - [ ] Add stronger capability and credential isolation.
   - Separate implementation and merge credentials or proxy capability calls so

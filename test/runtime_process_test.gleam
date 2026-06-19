@@ -1,7 +1,9 @@
+import gleam/dict
 import gleam/erlang/atom
 import gleam/erlang/process
 import gleam/list
 import gleam/option.{None}
+import gleam/string
 import gleeunit/should
 import tango/application
 import tango/config
@@ -55,4 +57,76 @@ pub fn application_starts_complete_runtime_supervision_tree_test() {
   process.sleep(20)
   file.remove_tree(root)
   |> should.be_ok()
+}
+
+pub fn run_foreground_fails_when_workspace_command_is_missing_test() {
+  let base = config.defaults("/tmp/tango", None)
+  let runtime_config =
+    config.Config(
+      ..base,
+      agent_codex: config.AgentConfig(..base.agent_codex, command: "erl"),
+      workspace_aicasa: config.WorkspaceConfig(
+        ..base.workspace_aicasa,
+        command: "tango-definitely-missing-casa",
+      ),
+    )
+
+  let result = application.run_foreground(runtime_config)
+
+  result
+  |> should.be_error()
+  let assert Error(reason) = result
+  reason
+  |> string.contains("startup preflight failed")
+  |> should.be_true()
+  reason
+  |> string.contains("tango-definitely-missing-casa (workspace.aicasa.command)")
+  |> should.be_true()
+}
+
+pub fn run_foreground_preflights_configured_provider_clis_test() {
+  let base = config.defaults("/tmp/tango", None)
+  let runtime_config =
+    config.Config(
+      ..base,
+      agent_codex: config.AgentConfig(..base.agent_codex, command: "erl"),
+      workspace_aicasa: config.WorkspaceConfig(
+        ..base.workspace_aicasa,
+        command: "erl",
+      ),
+      registries: dict.from_list([
+        #(
+          "github",
+          config.RegistryConfig(
+            cli: "tango-definitely-missing-provider-cli",
+            skill: "/tmp/github-ticket-system-skill.md",
+            statuses: dict.new(),
+            status_map_validated: True,
+          ),
+        ),
+      ]),
+      forges: dict.from_list([
+        #(
+          "github",
+          config.ForgeConfig(
+            cli: "tango-definitely-missing-provider-cli",
+            skill: "/tmp/github-forge-skill.md",
+          ),
+        ),
+      ]),
+    )
+
+  let result = application.run_foreground(runtime_config)
+
+  result
+  |> should.be_error()
+  let assert Error(reason) = result
+  reason
+  |> string.contains(
+    "tango-definitely-missing-provider-cli (registries.github.cli, forges.github.cli)",
+  )
+  |> should.be_true()
+  reason
+  |> string.contains("Run tango capability install")
+  |> should.be_true()
 }

@@ -24,7 +24,9 @@ import tango/domain/run
 import tango/domain/session
 import tango/domain/ticket
 import tango/git/adapter as git
+import tango/log
 import tango/prompt
+import tango/run_process
 import tango/runtime
 import tango/store/file
 import tango/store/store
@@ -153,6 +155,18 @@ pub fn execute(
   dependencies: WorkerDependencies,
   attempt: run.RunAttempt,
 ) -> Result(WorkerResult(state), WorkerError) {
+  log.info(
+    "worker starting ticket_id="
+    <> attempt.ticket_id
+    <> " run_id="
+    <> attempt.id
+    <> " run_kind="
+    <> run_kind_text(attempt.kind)
+    <> " attempt="
+    <> int.to_string(attempt.attempt)
+    <> " session_id="
+    <> attempt.session_id,
+  )
   use item <- result.try(
     backend.get_ticket(state, attempt.ticket_id)
     |> result.map_error(StoreFailure),
@@ -176,9 +190,34 @@ pub fn execute(
     )
     |> result.map_error(RunFailure),
   )
+  log.info(
+    "worker run record started ticket_id="
+    <> item.id
+    <> " run_id="
+    <> attempt.id
+    <> " state="
+    <> lifecycle.to_string(item.state),
+  )
+  log.info(
+    "worker ensuring workspace ticket_id="
+    <> item.id
+    <> " run_id="
+    <> attempt.id,
+  )
   use current_workspace <- result.try(
     dependencies.workspace.ensure(state_dir, item)
     |> result.map_error(WorkspaceFailure),
+  )
+  log.info(
+    "worker workspace ready ticket_id="
+    <> item.id
+    <> " run_id="
+    <> attempt.id
+    <> " workspace_path="
+    <> current_workspace.root_path,
+  )
+  log.info(
+    "worker creating workpad ticket_id=" <> item.id <> " run_id=" <> attempt.id,
   )
   use workpad_item <- result.try(
     workpad.create(
@@ -190,10 +229,24 @@ pub fn execute(
     )
     |> result.map_error(WorkpadFailure),
   )
+  log.info(
+    "worker workpad ready ticket_id="
+    <> item.id
+    <> " run_id="
+    <> attempt.id
+    <> " workpad_path="
+    <> workpad_item.root_path,
+  )
+  let attempt =
+    run.RunAttempt(..attempt, workspace_path: current_workspace.root_path)
+  use state <- result.try(
+    backend.save_run(started.state, attempt)
+    |> result.map_error(StoreFailure),
+  )
   use #(state, _) <- result.try(
     run_command.update_status(
       backend,
-      started.state,
+      state,
       item.id,
       attempt.id,
       run.BuildingPrompt,
@@ -201,6 +254,9 @@ pub fn execute(
       None,
     )
     |> result.map_error(RunFailure),
+  )
+  log.info(
+    "worker building prompt ticket_id=" <> item.id <> " run_id=" <> attempt.id,
   )
   let assembled_prompt =
     prompt.build(
@@ -229,7 +285,11 @@ pub fn execute(
       prompt: assembled_prompt,
       workspace_path: current_workspace.root_path,
       workpad_path: workpad_item.root_path,
+      sandbox_paths: sandbox_paths(item),
       resume_session_id: resume_session_id(agent_session, attempt),
+      on_process_started: fn(pid) {
+        record_agent_process_started(state_dir, item.id, attempt.id, pid)
+      },
     )
   case
     preflight_run(
@@ -241,7 +301,15 @@ pub fn execute(
       dependencies.git,
     )
   {
-    Error(reason) ->
+    Error(reason) -> {
+      log.warn(
+        "worker preflight blocked ticket_id="
+        <> item.id
+        <> " run_id="
+        <> attempt.id
+        <> " reason="
+        <> reason,
+      )
       finish_preflight_block(
         backend,
         state,
@@ -250,9 +318,57 @@ pub fn execute(
         workpad_item,
         reason,
       )
+    }
     Ok(_) -> {
-      use response <- result.try(
-        dependencies.agent.run(request) |> result.map_error(AgentFailure),
+      log.info(
+        "worker preflight passed ticket_id="
+        <> item.id
+        <> " run_id="
+        <> attempt.id,
+      )
+      use #(state, _) <- result.try(
+        run_command.update_status(
+          backend,
+          state,
+          item.id,
+          attempt.id,
+          run.Streaming,
+          None,
+          None,
+        )
+        |> result.map_error(RunFailure),
+      )
+      log.info(
+        "worker launching agent ticket_id="
+        <> item.id
+        <> " run_id="
+        <> attempt.id,
+      )
+      let agent_result = dependencies.agent.run(request)
+      let _ =
+        run_process.mark_ended(
+          state_dir,
+          item.id,
+          attempt.id,
+          runtime.now_rfc3339(),
+        )
+      use response <- result.try(agent_result |> result.map_error(AgentFailure))
+      log.info(
+        "worker agent exited ticket_id="
+        <> item.id
+        <> " run_id="
+        <> attempt.id
+        <> " exit_code="
+        <> int.to_string(response.exit_code)
+        <> " output_chars="
+        <> int.to_string(string.length(response.output))
+        <> usage_log_text(response.usage),
+      )
+      log.info(
+        "worker collecting artifacts ticket_id="
+        <> item.id
+        <> " run_id="
+        <> attempt.id,
       )
       use #(state, final_run) <- result.try(
         finish_run(
@@ -267,6 +383,14 @@ pub fn execute(
           response,
         )
         |> result.map_error(RunFailure),
+      )
+      log.info(
+        "worker artifacts processed ticket_id="
+        <> item.id
+        <> " run_id="
+        <> attempt.id
+        <> " final_status="
+        <> run_status_text(final_run.status),
       )
       let updated_ticket = case backend.get_ticket(state, item.id) {
         Ok(updated) -> updated
@@ -310,6 +434,108 @@ fn prior_artifacts(
   }
 }
 
+fn sandbox_paths(item: ticket.Ticket) -> List(String) {
+  list.append(ticket_skill_paths(item), codex_skill_paths())
+  |> unique_paths
+}
+
+fn ticket_skill_paths(item: ticket.Ticket) -> List(String) {
+  let registry_paths = case item.registry_binding {
+    Some(binding) -> existing_skill_parent(binding.registry_skill)
+    None -> []
+  }
+  let forge_paths = case item.forge_binding {
+    Some(binding) -> existing_skill_parent(binding.forge_skill)
+    None -> []
+  }
+  list.append(registry_paths, forge_paths)
+}
+
+fn existing_skill_parent(path: String) -> List(String) {
+  case file.is_regular_file_no_symlink(path), parent_dir(path) {
+    True, Some(parent) -> [parent]
+    _, _ -> []
+  }
+}
+
+fn codex_skill_paths() -> List(String) {
+  case codex_home() {
+    Some(root) ->
+      [join(root, "skills"), join(join(root, "plugins"), "cache")]
+      |> existing_directories
+    None -> []
+  }
+}
+
+fn codex_home() -> Option(String) {
+  case non_empty_env("CODEX_HOME") {
+    Some(root) -> Some(root)
+    None ->
+      case non_empty_env("HOME") {
+        Some(home) -> Some(join(home, ".codex"))
+        None -> None
+      }
+  }
+}
+
+fn non_empty_env(name: String) -> Option(String) {
+  case runtime.get_env(name) {
+    Some(value) ->
+      case string.trim(value) {
+        "" -> None
+        trimmed -> Some(trimmed)
+      }
+    None -> None
+  }
+}
+
+fn existing_directories(paths: List(String)) -> List(String) {
+  paths
+  |> list.filter(fn(path) {
+    case file.list_dir(path) {
+      Ok(_) -> True
+      Error(_) -> False
+    }
+  })
+}
+
+fn parent_dir(path: String) -> Option(String) {
+  case string.trim(path) {
+    "" -> None
+    trimmed -> parent_segments(string.split(trimmed, "/"), [])
+  }
+}
+
+fn parent_segments(
+  segments: List(String),
+  acc: List(String),
+) -> Option(String) {
+  case segments {
+    [] | [_] -> None
+    [segment, _] -> Some(string.join(list.reverse([segment, ..acc]), with: "/"))
+    [segment, ..rest] -> parent_segments(rest, [segment, ..acc])
+  }
+}
+
+fn unique_paths(paths: List(String)) -> List(String) {
+  paths
+  |> list.fold([], fn(acc, path) {
+    case list.contains(acc, path) {
+      True -> acc
+      False -> list.append(acc, [path])
+    }
+  })
+}
+
+fn join(left: String, right: String) -> String {
+  case string.ends_with(left, "/"), string.starts_with(right, "/") {
+    True, True -> left <> string.drop_start(right, 1)
+    True, False -> left <> right
+    False, True -> left <> right
+    False, False -> left <> "/" <> right
+  }
+}
+
 fn artifact_is_context(
   record: artifact.ArtifactRecord,
   context_session_ids: List(String),
@@ -335,6 +561,40 @@ fn prior_reviews(
   |> result.unwrap([])
 }
 
+fn record_agent_process_started(
+  state_dir: String,
+  ticket_id: String,
+  run_id: String,
+  pid: Int,
+) -> Nil {
+  log.info(
+    "worker agent process started ticket_id="
+    <> ticket_id
+    <> " run_id="
+    <> run_id
+    <> " pid="
+    <> int.to_string(pid),
+  )
+  run_process.mark_started(
+    state_dir,
+    ticket_id,
+    run_id,
+    pid,
+    runtime.now_rfc3339(),
+  )
+  |> result.map_error(fn(reason) {
+    log.warn(
+      "worker agent process marker failed ticket_id="
+      <> ticket_id
+      <> " run_id="
+      <> run_id
+      <> " reason="
+      <> reason,
+    )
+  })
+  |> result.unwrap(Nil)
+}
+
 fn preflight_run(
   backend: store.Store(state),
   state: state,
@@ -347,7 +607,7 @@ fn preflight_run(
     run.MergeRun -> {
       use approval <- result.try(
         latest_merge_approval(backend, state, item.id)
-        |> result.map_error(worker_error_text),
+        |> result.map_error(error_text),
       )
       use _ <- result.try(approval_matches_latest_durable_set(
         backend,
@@ -433,21 +693,19 @@ fn finish_run(
     state,
     item.id,
     attempt.id,
-    run.Streaming,
-    None,
-    None,
-  ))
-  use #(state, _) <- result.try(run_command.update_status(
-    backend,
-    state,
-    item.id,
-    attempt.id,
     run.CollectingArtifacts,
     None,
     None,
   ))
   case response.exit_code {
     0 -> {
+      use state <- result.try(record_response_usage(
+        backend,
+        state,
+        item.id,
+        attempt.id,
+        response,
+      ))
       case
         post_process_success(
           backend,
@@ -478,11 +736,18 @@ fn finish_run(
             attempt.id,
             run.Failed,
             None,
-            Some(worker_error_text(error)),
+            Some(error_text(error)),
           )
       }
     }
-    _ ->
+    _ -> {
+      use state <- result.try(record_response_usage(
+        backend,
+        state,
+        item.id,
+        attempt.id,
+        response,
+      ))
       run_command.update_status(
         backend,
         state,
@@ -492,6 +757,31 @@ fn finish_run(
         None,
         Some(response.output),
       )
+    }
+  }
+}
+
+fn record_response_usage(
+  backend: store.Store(state),
+  state: state,
+  ticket_id: String,
+  run_id: String,
+  response: adapter.AgentResponse,
+) -> Result(state, run_command.RunCommandError) {
+  case response.usage {
+    None -> Ok(state)
+    Some(usage) -> {
+      use attempt <- result.try(
+        backend.get_run(state, ticket_id, run_id)
+        |> result.map_error(run_command.StoreFailure),
+      )
+      let updated = run.RunAttempt(..attempt, usage: Some(usage))
+      use state <- result.try(
+        backend.save_run(state, updated)
+        |> result.map_error(run_command.StoreFailure),
+      )
+      Ok(state)
+    }
   }
 }
 
@@ -1241,7 +1531,7 @@ fn continue_merge_recording(
                 item,
                 attempt,
                 result_marker.completed_at,
-                worker_error_text(error),
+                error_text(error),
               )
             Ok(state) ->
               command.record_merge_result(
@@ -2641,7 +2931,48 @@ fn invalid_observation() -> ReviewCommentObservation {
   )
 }
 
-fn worker_error_text(error: WorkerError) -> String {
+fn run_kind_text(kind: run.RunKind) -> String {
+  case kind {
+    run.Execution -> "execution"
+    run.ReviewWatch -> "review_watch"
+    run.RegistrySync -> "registry_sync"
+    run.MergeRun -> "merge"
+  }
+}
+
+fn run_status_text(status: run.RunStatus) -> String {
+  case status {
+    run.PreparingWorkspace -> "preparing_workspace"
+    run.BuildingPrompt -> "building_prompt"
+    run.LaunchingAgent -> "launching_agent"
+    run.Streaming -> "streaming"
+    run.CollectingArtifacts -> "collecting_artifacts"
+    run.Succeeded -> "succeeded"
+    run.Failed -> "failed"
+    run.TimedOut -> "timed_out"
+    run.Stalled -> "stalled"
+    run.Canceled -> "canceled"
+  }
+}
+
+fn usage_log_text(usage: Option(run.RunUsage)) -> String {
+  case usage {
+    None -> ""
+    Some(usage) ->
+      " usage_input_tokens="
+      <> int.to_string(usage.input_tokens)
+      <> " usage_cached_input_tokens="
+      <> int.to_string(usage.cached_input_tokens)
+      <> " usage_output_tokens="
+      <> int.to_string(usage.output_tokens)
+      <> " usage_reasoning_output_tokens="
+      <> int.to_string(usage.reasoning_output_tokens)
+      <> " usage_total_tokens="
+      <> int.to_string(usage.total_tokens)
+  }
+}
+
+pub fn error_text(error: WorkerError) -> String {
   case error {
     StoreFailure(inner) -> "store failure: " <> string.inspect(inner)
     CommandFailure(inner) -> "command failure: " <> string.inspect(inner)

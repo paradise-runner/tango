@@ -97,6 +97,7 @@ pub fn orchestrator_dispatches_queued_ticket_under_worker_supervision_test() {
           exit_code: 0,
           output: "complete",
           runtime_session_id: Some("runtime-session"),
+          usage: None,
         ))
       }),
     )
@@ -200,6 +201,7 @@ pub fn orchestrator_dispatches_review_watch_ticket_test() {
           exit_code: 0,
           output: "complete",
           runtime_session_id: Some("runtime-review"),
+          usage: None,
         ))
       }),
     )
@@ -403,6 +405,7 @@ pub fn orchestrator_dispatches_merge_ticket_test() {
           exit_code: 0,
           output: "merged",
           runtime_session_id: Some("runtime-merge"),
+          usage: None,
         ))
       }),
     )
@@ -499,6 +502,7 @@ pub fn orchestrator_dispatches_registry_sync_for_pending_review_status_test() {
           exit_code: 0,
           output: "registry synchronized",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -568,6 +572,7 @@ pub fn orchestrator_restores_failed_execution_for_polled_retry_test() {
           exit_code: 1,
           output: "agent failed",
           runtime_session_id: None,
+          usage: None,
         ))
       }),
     )
@@ -597,6 +602,140 @@ pub fn orchestrator_restores_failed_execution_for_polled_retry_test() {
   let assert [attempt] = runs
   attempt.status
   |> should.equal(run.Failed)
+  let assert Ok(item) = backend.get_ticket(state, "ticket-1")
+  item.state
+  |> should.equal(lifecycle.Queued)
+
+  process.kill(orchestrator_started.pid)
+  process.kill(worker_started.pid)
+  process.kill(store_started.pid)
+  file.remove_tree(root)
+  |> should.be_ok()
+}
+
+pub fn orchestrator_records_worker_start_failure_reason_test() {
+  let assert Ok(root) =
+    file.temporary_directory("tango-orchestrator-worker-failure")
+  [root <> "/tickets", root <> "/workpads", root <> "/workspaces"]
+  |> list.each(fn(path) {
+    runtime.ensure_dir(path)
+    |> should.be_ok()
+  })
+  let backend = json_store.store()
+  let state = json_store.new(root)
+  let assert Ok(_) = backend.save_ticket(state, queued_ticket())
+  let dependencies =
+    worker.WorkerDependencies(
+      workspace: workspace.WorkspaceAdapter(ensure: fn(_, _) {
+        Error(workspace.ProvisionFailed("executable not found: casa"))
+      }),
+      git: git.passthrough(),
+      attestation: attestation.passthrough(),
+      agent: adapter.AgentAdapter(run: fn(_) {
+        panic as "agent should not launch when workspace provisioning fails"
+      }),
+    )
+
+  let worker_supervisor_name = worker_supervisor.new_name()
+  let store_server_name = store_server.new_name()
+  let assert Ok(store_started) = store_server.start(store_server_name, root)
+  process.unlink(store_started.pid)
+  let assert Ok(worker_started) =
+    worker_supervisor.start(worker_supervisor_name)
+  process.unlink(worker_started.pid)
+  let orchestrator_name = orchestrator.new_name()
+  let assert Ok(orchestrator_started) =
+    orchestrator.start(
+      orchestrator_name,
+      root,
+      store_server_name,
+      dependencies,
+      1,
+      60_000,
+      worker_supervisor_name,
+    )
+  process.unlink(orchestrator_started.pid)
+  process.sleep(250)
+
+  let assert Ok(runs) = backend.list_runs(state, "ticket-1")
+  let assert [attempt] = runs
+  attempt.status
+  |> should.equal(run.Failed)
+  let assert Some(error) = attempt.error
+  error
+  |> string.contains("workspace failure")
+  |> should.be_true()
+  error
+  |> string.contains("executable not found: casa")
+  |> should.be_true()
+  let assert Ok(item) = backend.get_ticket(state, "ticket-1")
+  item.state
+  |> should.equal(lifecycle.Queued)
+
+  process.kill(orchestrator_started.pid)
+  process.kill(worker_started.pid)
+  process.kill(store_started.pid)
+  file.remove_tree(root)
+  |> should.be_ok()
+}
+
+pub fn orchestrator_records_worker_crash_after_streaming_test() {
+  let assert Ok(root) =
+    file.temporary_directory("tango-orchestrator-worker-crash")
+  [root <> "/tickets", root <> "/workpads", root <> "/workspaces"]
+  |> list.each(fn(path) {
+    runtime.ensure_dir(path)
+    |> should.be_ok()
+  })
+  let backend = json_store.store()
+  let state = json_store.new(root)
+  let assert Ok(_) = backend.save_ticket(state, queued_ticket())
+  let dependencies =
+    worker.WorkerDependencies(
+      workspace: workspace.WorkspaceAdapter(ensure: fn(_, item) {
+        Ok(
+          workspace.Workspace(
+            root_path: root <> "/workspace-" <> item.id,
+            repos: [],
+          ),
+        )
+      }),
+      git: git.passthrough(),
+      attestation: attestation.passthrough(),
+      agent: adapter.AgentAdapter(run: fn(_) {
+        panic as "agent crashed after streaming"
+      }),
+    )
+
+  let worker_supervisor_name = worker_supervisor.new_name()
+  let store_server_name = store_server.new_name()
+  let assert Ok(store_started) = store_server.start(store_server_name, root)
+  process.unlink(store_started.pid)
+  let assert Ok(worker_started) =
+    worker_supervisor.start(worker_supervisor_name)
+  process.unlink(worker_started.pid)
+  let orchestrator_name = orchestrator.new_name()
+  let assert Ok(orchestrator_started) =
+    orchestrator.start(
+      orchestrator_name,
+      root,
+      store_server_name,
+      dependencies,
+      1,
+      60_000,
+      worker_supervisor_name,
+    )
+  process.unlink(orchestrator_started.pid)
+  process.sleep(250)
+
+  let assert Ok(runs) = backend.list_runs(state, "ticket-1")
+  let assert [attempt] = runs
+  attempt.status
+  |> should.equal(run.Failed)
+  let assert Some(error) = attempt.error
+  error
+  |> string.contains("worker crashed")
+  |> should.be_true()
   let assert Ok(item) = backend.get_ticket(state, "ticket-1")
   item.state
   |> should.equal(lifecycle.Queued)
@@ -688,6 +827,7 @@ pub fn changes_requested_dispatches_fresh_contextual_implementation_session_test
           exit_code: 1,
           output: "stop after prompt inspection",
           runtime_session_id: Some("must-not-be-reused"),
+          usage: None,
         ))
       }),
     )

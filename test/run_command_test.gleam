@@ -79,6 +79,7 @@ fn execution_run() -> run.RunAttempt {
     started_at: "2026-06-07T00:01:00Z",
     ended_at: None,
     status: run.PreparingWorkspace,
+    usage: None,
     error: None,
   )
 }
@@ -114,6 +115,7 @@ fn merge_run() -> run.RunAttempt {
     started_at: "2026-06-07T00:01:00Z",
     ended_at: None,
     status: run.PreparingWorkspace,
+    usage: None,
     error: None,
   )
 }

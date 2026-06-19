@@ -143,31 +143,48 @@ fn decode_workspace(
 ) -> Result(workspace.Workspace, workspace.WorkspaceError) {
   case json.parse(source, workspace_decoder()) {
     Ok(decoded) -> Ok(decoded)
-    Error(_) -> Error(workspace.ProvisionFailed("invalid aicasa inspect JSON"))
+    Error(_) -> Error(workspace.ProvisionFailed("invalid casa inspect JSON"))
   }
 }
 
 fn workspace_decoder() -> decode.Decoder(workspace.Workspace) {
   use schema_version <- decode.field("schema_version", decode.int)
-  use root_path <- decode.field("workspace_root", decode.string)
+  use root_path <- decode.then(workspace_root_decoder())
   use repos <- decode.field("repositories", decode.list(of: repo_decoder()))
   case schema_version {
     1 -> decode.success(workspace.Workspace(root_path: root_path, repos: repos))
     _ ->
       decode.failure(
         workspace.Workspace(root_path: "", repos: []),
-        expected: "aicasa inspect schema version 1",
+        expected: "casa inspect schema version 1",
       )
   }
 }
 
+fn workspace_root_decoder() -> decode.Decoder(String) {
+  decode.one_of(decode.at(["path"], decode.string), or: [
+    decode.at(["workspace_root"], decode.string),
+  ])
+}
+
 fn repo_decoder() -> decode.Decoder(workspace.WorkspaceRepo) {
   use path <- decode.field("path", decode.string)
-  decode.success(workspace.WorkspaceRepo(
-    binding_id: basename(path),
-    source: "",
-    path: path,
-  ))
+  use directory <- decode.optional_field(
+    "directory",
+    basename(path),
+    decode.string,
+  )
+  use exists <- decode.optional_field("exists", True, decode.bool)
+  let binding_id = case string.trim(directory) {
+    "" -> basename(path)
+    _ -> directory
+  }
+  let repo =
+    workspace.WorkspaceRepo(binding_id: binding_id, source: "", path: path)
+  case exists {
+    True -> decode.success(repo)
+    False -> decode.failure(repo, expected: "existing casa repository")
+  }
 }
 
 fn bind_repositories(

@@ -8,9 +8,14 @@
     now_rfc3339/0,
     unique_id/1,
     run_command/4,
+    run_command_streaming/4,
+    run_command_streaming_observed/5,
+    run_guarded/1,
+    is_pid_alive/1,
     stable_hash/1,
     sha256/1,
     confirm/1,
+    halt/1,
     atomic_replace/2,
     atomic_create/2,
     read/1,
@@ -80,7 +85,19 @@ confirm(Prompt) ->
             end
     end.
 
+halt(Status) ->
+    erlang:halt(Status).
+
 run_command(Command, Args, Env, Cwd) ->
+    run_command(Command, Args, Env, Cwd, false, none).
+
+run_command_streaming(Command, Args, Env, Cwd) ->
+    run_command(Command, Args, Env, Cwd, true, none).
+
+run_command_streaming_observed(Command, Args, Env, Cwd, OnStart) ->
+    run_command(Command, Args, Env, Cwd, true, {some, OnStart}).
+
+run_command(Command, Args, Env, Cwd, StreamOutput, OnStart) ->
     case resolve_executable(Command) of
         {ok, Executable} ->
             PortSettings0 = [
@@ -88,6 +105,7 @@ run_command(Command, Args, Env, Cwd) ->
                 exit_status,
                 hide,
                 use_stdio,
+                in,
                 stderr_to_stdout,
                 {args, [unicode:characters_to_list(Arg) || Arg <- Args]},
                 {env, [{unicode:characters_to_list(Key), unicode:characters_to_list(Val)} || {Key, Val} <- Env]}
@@ -98,7 +116,8 @@ run_command(Command, Args, Env, Cwd) ->
             end,
             try
                 Port = open_port({spawn_executable, Executable}, PortSettings),
-                collect_port(Port, [])
+                report_port_started(Port, OnStart),
+                collect_port(Port, [], StreamOutput)
             catch
                 error:enoent -> {error, executable_not_found(Command)};
                 error:Reason -> {error, command_error(Command, Reason)}
@@ -106,6 +125,49 @@ run_command(Command, Args, Env, Cwd) ->
         {error, Reason} ->
             {error, Reason}
     end.
+
+report_port_started(_Port, none) ->
+    ok;
+report_port_started(Port, {some, OnStart}) ->
+    case erlang:port_info(Port, os_pid) of
+        {os_pid, Pid} when is_integer(Pid) ->
+            _ = OnStart(Pid),
+            ok;
+        _ ->
+            ok
+    end.
+
+is_pid_alive(Pid) when is_integer(Pid), Pid > 0 ->
+    case os:find_executable("kill") of
+        false -> false;
+        Kill ->
+            case run_command(
+                unicode:characters_to_binary(Kill),
+                [<<"-0">>, integer_to_binary(Pid)],
+                [],
+                none,
+                false,
+                none
+            ) of
+                {ok, {command_result, 0, _}} -> true;
+                _ -> false
+            end
+    end;
+is_pid_alive(_) ->
+    false.
+
+run_guarded(Work) ->
+    try Work() of
+        Result -> {ok, Result}
+    catch
+        Class:Reason:Stack ->
+            {error, guarded_error(Class, Reason, Stack)}
+    end.
+
+guarded_error(Class, Reason, Stack) ->
+    unicode:characters_to_binary(
+        io_lib:format("~p:~p~n~p", [Class, Reason, Stack])
+    ).
 
 resolve_executable(Command) ->
     CommandList = unicode:characters_to_list(Command),
@@ -224,10 +286,14 @@ write_synced(Path, Contents, Options) ->
         Error -> Error
     end.
 
-collect_port(Port, Acc) ->
+collect_port(Port, Acc, StreamOutput) ->
     receive
         {Port, {data, Data}} ->
-            collect_port(Port, [Acc, Data]);
+            case StreamOutput of
+                true -> io:put_chars(standard_error, Data);
+                false -> ok
+            end,
+            collect_port(Port, [Acc, Data], StreamOutput);
         {Port, {exit_status, Status}} ->
             {ok, {command_result, Status, iolist_to_binary(Acc)}}
     end.

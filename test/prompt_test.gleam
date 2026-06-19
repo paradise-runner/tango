@@ -112,6 +112,7 @@ fn attempt(
     started_at: "2026-06-07T00:01:00Z",
     ended_at: None,
     status: run.BuildingPrompt,
+    usage: None,
     error: None,
   )
 }

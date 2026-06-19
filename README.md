@@ -67,8 +67,8 @@ mise exec gleam@latest -- gleam run -- help
 
 The shortest path from a new ticket to `Done` looks like this:
 
-1. Install independent ticket-system and forge capabilities, then combine them
-   in a capability profile:
+1. Install independent ticket-system and forge capabilities through Tango, then
+   combine them in a capability profile:
 
 ```sh
 mise exec gleam@latest -- gleam run -- capability install ticket-system github
@@ -83,6 +83,12 @@ Tango lifecycle label identifiers. Forge installation configures a separate
 pull-request and merge skill. They may use the same CLI, but they are selected
 independently so future non-forge ticket systems can be combined with either
 forge.
+
+Use the normal install mode unless you intentionally manage the provider CLI
+yourself. It verifies the configured CLI, installs it through a supported
+operator-approved package manager when possible, and fails clearly rather than
+leaving a partial capability. `--skill-only` records the skill and expected
+command only; `tango run` will still exit if that command is not available.
 
 2. Automatch and validate the ticket-system status map for the repository
    before creating tickets:
@@ -121,7 +127,7 @@ mise exec gleam@latest -- gleam run -- ticket-system status-map github validate 
 ```
 
 3. Create and queue the ticket in Tango. Repository values must be GitHub
-   `owner/repo` shorthand or full Git clone URLs; aicasa creates the isolated
+   `owner/repo` shorthand or full Git clone URLs; `casa` creates the isolated
    ticket workspace used by the agent.
 
 ```sh
@@ -139,6 +145,13 @@ mise exec gleam@latest -- gleam run -- ticket create \
 ```sh
 mise exec gleam@latest -- gleam run -- run
 ```
+
+Startup preflights the local tools the runtime needs before it claims work:
+`codex`, `casa`, and every configured ticket-system or forge CLI. If a
+provider CLI such as `gh` or `fj` is missing, install it with
+`tango capability install ...` instead of editing `config.toml` by hand. If
+`codex` or `casa` is missing, install that runtime command or update the
+matching `[agent.codex]` or `[workspace.aicasa]` command in `config.toml`.
 
 In a second terminal you can inspect the current state:
 

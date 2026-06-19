@@ -1,4 +1,5 @@
 import gleam/dynamic/decode
+import gleam/erlang/process as erlang_process
 import gleam/int
 import gleam/io
 import gleam/json
@@ -30,6 +31,7 @@ pub type CliCommand {
   Run
   Status
   Dashboard
+  DashboardOnce
   CapabilityList
   CapabilityInstall(manager.CapabilityKind, String, manager.InstallMode)
   CapabilityProfileCreate(String, String, String)
@@ -91,16 +93,81 @@ type PullRequestArtifactEntry {
   )
 }
 
-pub fn main() -> Nil {
-  let result =
-    runtime.argv()
-    |> parse
-    |> result.try(run)
+const dashboard_refresh_ms = 300
 
+pub fn main() -> Nil {
+  case runtime.argv() |> parse {
+    Ok(Dashboard) -> run_live_dashboard() |> handle_main_result
+    Ok(command) -> command |> run |> handle_main_output
+    Error(error) -> handle_main_error(error)
+  }
+}
+
+fn handle_main_output(result: Result(String, CliError)) -> Nil {
   case result {
     Ok(output) -> io.println(output)
-    Error(error) -> io.println(render_error(error))
+    Error(error) -> handle_main_error(error)
   }
+}
+
+fn handle_main_result(result: Result(Nil, CliError)) -> Nil {
+  case result {
+    Ok(Nil) -> Nil
+    Error(error) -> handle_main_error(error)
+  }
+}
+
+fn handle_main_error(error: CliError) -> Nil {
+  io.println_error(render_error(error))
+  runtime.halt(1)
+}
+
+fn run_live_dashboard() -> Result(Nil, CliError) {
+  use resolved <- result.try(resolve_runtime())
+  let #(root, operator_id) = resolved
+  render_live_dashboard_loop(
+    json_store.store(),
+    json_store.new(root),
+    root,
+    operator_id,
+    0,
+  )
+}
+
+fn render_live_dashboard_loop(
+  backend: store.Store(state),
+  state: state,
+  root: String,
+  operator_id: String,
+  frame_index: Int,
+) -> Result(Nil, CliError) {
+  case
+    render_dashboard_frame(
+      backend,
+      state,
+      root,
+      operator_id,
+      runtime.now_rfc3339(),
+      frame_index,
+    )
+  {
+    Ok(output) -> {
+      io.print(clear_terminal() <> output <> "\n")
+      erlang_process.sleep(dashboard_refresh_ms)
+      render_live_dashboard_loop(
+        backend,
+        state,
+        root,
+        operator_id,
+        frame_index + 1,
+      )
+    }
+    Error(error) -> Error(error)
+  }
+}
+
+fn clear_terminal() -> String {
+  "\u{1b}[2J\u{1b}[H"
 }
 
 pub fn parse(args: List(String)) -> Result(CliCommand, CliError) {
@@ -110,6 +177,7 @@ pub fn parse(args: List(String)) -> Result(CliCommand, CliError) {
     ["run"] -> Ok(Run)
     ["status"] -> Ok(Status)
     ["dashboard"] -> Ok(Dashboard)
+    ["dashboard", "--once"] -> Ok(DashboardOnce)
     ["capability", "list"] -> Ok(CapabilityList)
     ["capability", "install", kind, bundle] ->
       parse_capability_install(kind, bundle, manager.VerifyOrInstallCli)
@@ -196,8 +264,9 @@ fn run_with_confirmation(
     Help -> Ok(usage())
     Init -> init(root, operator_id)
     Run -> run_application(root)
-    Status -> render_status(backend, state, operator_id, now)
-    Dashboard -> render_dashboard(backend, state, operator_id, now)
+    Status -> render_status(backend, state, root, operator_id, now)
+    Dashboard | DashboardOnce ->
+      render_dashboard(backend, state, root, operator_id, now)
     CapabilityList -> capability_list(root)
     CapabilityInstall(kind, bundle, mode) ->
       capability_install(root, kind, bundle, mode)
@@ -448,7 +517,7 @@ fn usage() -> String {
       "  tango init",
       "  tango run",
       "  tango status",
-      "  tango dashboard",
+      "  tango dashboard [--once]",
       "  tango capability list",
       "  tango capability install <ticket-system|forge> <github|forgejo> [--skill-only]",
       "  tango capability profile create <name> --ticket-system <name> --forge <name>",
@@ -1176,10 +1245,17 @@ fn run_application(root: String) -> Result(String, CliError) {
 fn render_status(
   backend: store.Store(state),
   state: state,
+  root: String,
   operator_id: String,
   now: String,
 ) -> Result(String, CliError) {
-  dashboard.status_snapshot(backend, state, now, operator_id)
+  dashboard.status_snapshot_with_runtime(
+    backend,
+    state,
+    now,
+    operator_id,
+    Some(root),
+  )
   |> result.map(dashboard.render_status)
   |> result.map_error(Store)
 }
@@ -1187,11 +1263,39 @@ fn render_status(
 fn render_dashboard(
   backend: store.Store(state),
   state: state,
+  root: String,
   operator_id: String,
   now: String,
 ) -> Result(String, CliError) {
-  dashboard.dashboard_snapshot(backend, state, now, operator_id)
+  dashboard.dashboard_snapshot_with_runtime(
+    backend,
+    state,
+    now,
+    operator_id,
+    Some(root),
+  )
   |> result.map(dashboard.render_dashboard)
+  |> result.map_error(Store)
+}
+
+fn render_dashboard_frame(
+  backend: store.Store(state),
+  state: state,
+  root: String,
+  operator_id: String,
+  now: String,
+  frame_index: Int,
+) -> Result(String, CliError) {
+  dashboard.dashboard_snapshot_with_runtime(
+    backend,
+    state,
+    now,
+    operator_id,
+    Some(root),
+  )
+  |> result.map(fn(snapshot) {
+    dashboard.render_dashboard_frame(snapshot, frame_index)
+  })
   |> result.map_error(Store)
 }
 
