@@ -130,3 +130,38 @@ pub fn run_foreground_preflights_configured_provider_clis_test() {
   |> string.contains("Run tango capability install")
   |> should.be_true()
 }
+
+pub fn run_foreground_preflights_selected_opencode_command_test() {
+  let base = config.defaults("/tmp/tango", None)
+  let runtime_config =
+    config.Config(
+      ..base,
+      agent_runtime: config.OpencodeRuntime,
+      agent_codex: config.AgentConfig(
+        ..base.agent_codex,
+        command: "tango-definitely-missing-codex",
+      ),
+      agent_opencode: config.OpencodeAgentConfig(
+        ..base.agent_opencode,
+        command: "tango-definitely-missing-opencode",
+      ),
+      workspace_aicasa: config.WorkspaceConfig(
+        ..base.workspace_aicasa,
+        command: "erl",
+      ),
+    )
+
+  let result = application.run_foreground(runtime_config)
+
+  result
+  |> should.be_error()
+  let assert Error(reason) = result
+  reason
+  |> string.contains(
+    "tango-definitely-missing-opencode (agent.opencode.command)",
+  )
+  |> should.be_true()
+  reason
+  |> string.contains("agent.codex.command")
+  |> should.be_false()
+}

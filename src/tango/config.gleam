@@ -14,6 +14,15 @@ pub type AgentConfig {
   AgentConfig(command: String, transport: String, default_model: String)
 }
 
+pub type AgentRuntime {
+  CodexRuntime
+  OpencodeRuntime
+}
+
+pub type OpencodeAgentConfig {
+  OpencodeAgentConfig(command: String, provider: String, default_model: String)
+}
+
 pub type WorkspaceConfig {
   WorkspaceConfig(command: String, root: String)
 }
@@ -52,7 +61,9 @@ pub type Config {
     state_dir: String,
     operator_id: Option(String),
     orchestrator: OrchestratorConfig,
+    agent_runtime: AgentRuntime,
     agent_codex: AgentConfig,
+    agent_opencode: OpencodeAgentConfig,
     workspace_aicasa: WorkspaceConfig,
     capability_profiles: Dict(String, CapabilityProfile),
     registries: Dict(String, RegistryConfig),
@@ -77,9 +88,15 @@ pub fn defaults(state_dir: String, operator_id: Option(String)) -> Config {
       poll_interval_ms: 30_000,
       max_concurrent_workers: 2,
     ),
+    agent_runtime: CodexRuntime,
     agent_codex: AgentConfig(
       command: "codex",
       transport: "exec",
+      default_model: "",
+    ),
+    agent_opencode: OpencodeAgentConfig(
+      command: "opencode",
+      provider: "openrouter",
       default_model: "",
     ),
     workspace_aicasa: WorkspaceConfig(
@@ -134,6 +151,11 @@ pub fn encode(config: Config) -> String {
   let Config(
     orchestrator: OrchestratorConfig(poll_interval_ms:, max_concurrent_workers:),
     agent_codex: AgentConfig(command:, transport:, default_model:),
+    agent_opencode: OpencodeAgentConfig(
+      command: opencode_command,
+      provider: opencode_provider,
+      default_model: opencode_default_model,
+    ),
     workspace_aicasa: WorkspaceConfig(
       command: workspace_command,
       root: workspace_root,
@@ -210,10 +232,18 @@ pub fn encode(config: Config) -> String {
     "poll_interval_ms = " <> int.to_string(poll_interval_ms),
     "max_concurrent_workers = " <> int.to_string(max_concurrent_workers),
     "",
+    "[agent]",
+    "runtime = " <> quoted(agent_runtime_to_string(config.agent_runtime)),
+    "",
     "[agent.codex]",
     "command = " <> quoted(command),
     "transport = " <> quoted(transport),
     "default_model = " <> quoted(default_model),
+    "",
+    "[agent.opencode]",
+    "command = " <> quoted(opencode_command),
+    "provider = " <> quoted(opencode_provider),
+    "default_model = " <> quoted(opencode_default_model),
     "",
     "[workspace.aicasa]",
     "command = " <> quoted(workspace_command),
@@ -353,6 +383,10 @@ fn apply(
         ),
       )
     }
+    "agent", "runtime" -> {
+      use parsed <- result.try(parse_agent_runtime(value))
+      Ok(Config(..config, agent_runtime: parsed))
+    }
     "agent.codex", "command" ->
       Ok(
         Config(
@@ -379,6 +413,36 @@ fn apply(
           ..config,
           agent_codex: AgentConfig(
             ..config.agent_codex,
+            default_model: unquoted(value),
+          ),
+        ),
+      )
+    "agent.opencode", "command" ->
+      Ok(
+        Config(
+          ..config,
+          agent_opencode: OpencodeAgentConfig(
+            ..config.agent_opencode,
+            command: unquoted(value),
+          ),
+        ),
+      )
+    "agent.opencode", "provider" ->
+      Ok(
+        Config(
+          ..config,
+          agent_opencode: OpencodeAgentConfig(
+            ..config.agent_opencode,
+            provider: unquoted(value),
+          ),
+        ),
+      )
+    "agent.opencode", "default_model" ->
+      Ok(
+        Config(
+          ..config,
+          agent_opencode: OpencodeAgentConfig(
+            ..config.agent_opencode,
             default_model: unquoted(value),
           ),
         ),
@@ -540,6 +604,8 @@ fn validate(config: Config) -> Result(Config, ConfigError) {
     config.orchestrator.poll_interval_ms > 0,
     config.orchestrator.max_concurrent_workers > 0,
     string.trim(config.agent_codex.command),
+    string.trim(config.agent_opencode.command),
+    string.trim(config.agent_opencode.provider),
     string.trim(config.workspace_aicasa.command),
     string.trim(config.workspace_aicasa.root),
     config.review.watch_interval_ms > 0,
@@ -548,31 +614,35 @@ fn validate(config: Config) -> Result(Config, ConfigError) {
     string.trim(config.retention_completed),
     valid_dashboard_kind(config.dashboard_kind)
   {
-    "", _, _, _, _, _, _, _, _, _, _ ->
+    "", _, _, _, _, _, _, _, _, _, _, _, _ ->
       Error(InvalidConfig("missing [state].dir"))
-    _, False, _, _, _, _, _, _, _, _, _ ->
+    _, False, _, _, _, _, _, _, _, _, _, _, _ ->
       Error(InvalidConfig("orchestrator.poll_interval_ms must be positive"))
-    _, _, False, _, _, _, _, _, _, _, _ ->
+    _, _, False, _, _, _, _, _, _, _, _, _, _ ->
       Error(InvalidConfig(
         "orchestrator.max_concurrent_workers must be positive",
       ))
-    _, _, _, "", _, _, _, _, _, _, _ ->
+    _, _, _, "", _, _, _, _, _, _, _, _, _ ->
       Error(InvalidConfig("agent.codex.command must not be empty"))
-    _, _, _, _, "", _, _, _, _, _, _ ->
+    _, _, _, _, "", _, _, _, _, _, _, _, _ ->
+      Error(InvalidConfig("agent.opencode.command must not be empty"))
+    _, _, _, _, _, "", _, _, _, _, _, _, _ ->
+      Error(InvalidConfig("agent.opencode.provider must not be empty"))
+    _, _, _, _, _, _, "", _, _, _, _, _, _ ->
       Error(InvalidConfig("workspace.aicasa.command must not be empty"))
-    _, _, _, _, _, "", _, _, _, _, _ ->
+    _, _, _, _, _, _, _, "", _, _, _, _, _ ->
       Error(InvalidConfig("workspace.aicasa.root must not be empty"))
-    _, _, _, _, _, _, False, _, _, _, _ ->
+    _, _, _, _, _, _, _, _, False, _, _, _, _ ->
       Error(InvalidConfig("review.watch_interval_ms must be positive"))
-    _, _, _, _, _, _, _, False, _, _, _ ->
+    _, _, _, _, _, _, _, _, _, False, _, _, _ ->
       Error(InvalidConfig("review.watch_activity must be comments_only"))
-    _, _, _, _, _, _, _, _, False, _, _ ->
+    _, _, _, _, _, _, _, _, _, _, False, _, _ ->
       Error(InvalidConfig("merge.authority must be agent_after_human_approval"))
-    _, _, _, _, _, _, _, _, _, "", _ ->
+    _, _, _, _, _, _, _, _, _, _, _, "", _ ->
       Error(InvalidConfig("retention.completed must not be empty"))
-    _, _, _, _, _, _, _, _, _, _, False ->
+    _, _, _, _, _, _, _, _, _, _, _, _, False ->
       Error(InvalidConfig("dashboard.kind must be terminal"))
-    _, _, _, _, _, _, _, _, _, _, _ -> {
+    _, _, _, _, _, _, _, _, _, _, _, _, _ -> {
       use _ <- result.try(validate_capability_profiles(
         config.capability_profiles,
       ))
@@ -778,6 +848,21 @@ fn valid_merge_authority(value: String) -> Bool {
 
 fn valid_dashboard_kind(value: String) -> Bool {
   value == "terminal"
+}
+
+pub fn agent_runtime_to_string(runtime: AgentRuntime) -> String {
+  case runtime {
+    CodexRuntime -> "codex"
+    OpencodeRuntime -> "opencode"
+  }
+}
+
+fn parse_agent_runtime(value: String) -> Result(AgentRuntime, ConfigError) {
+  case unquoted(value) {
+    "codex" -> Ok(CodexRuntime)
+    "opencode" -> Ok(OpencodeRuntime)
+    _ -> Error(InvalidConfig("agent.runtime must be codex or opencode"))
+  }
 }
 
 fn non_empty_string(value: String) -> Bool {
