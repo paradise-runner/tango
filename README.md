@@ -147,11 +147,13 @@ mise exec gleam@latest -- gleam run -- run
 ```
 
 Startup preflights the local tools the runtime needs before it claims work:
-`codex`, `casa`, and every configured ticket-system or forge CLI. If a
-provider CLI such as `gh` or `fj` is missing, install it with
+the selected agent harness (`codex` by default, or `opencode` when
+`[agent].runtime = "opencode"`), `casa`, and every configured ticket-system or
+forge CLI. If a provider CLI such as `gh` or `fj` is missing, install it with
 `tango capability install ...` instead of editing `config.toml` by hand. If
-`codex` or `casa` is missing, install that runtime command or update the
-matching `[agent.codex]` or `[workspace.aicasa]` command in `config.toml`.
+the selected agent command or `casa` is missing, install that runtime command
+or update the matching `[agent.codex]`, `[agent.opencode]`, or
+`[workspace.aicasa]` command in `config.toml`.
 
 In a second terminal you can inspect the current state:
 

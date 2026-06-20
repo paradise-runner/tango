@@ -236,6 +236,10 @@ This tracker lists the remaining work from [SPEC.md](SPEC.md) and
     implementation sessions cannot invoke merge operations.
 - [ ] Add operator controls for pause, cancel, bounded manual retry, process
   termination, archival, and pruning.
-- [ ] Add harness and model/provider selection.
+- [x] Add harness and model/provider selection.
   - [x] Build the initial `HarnessAdapter` contract and move Codex behind it.
-  - [ ] Add operator-facing harness and model/provider selection.
+  - [x] Add operator-facing Codex/Opencode harness selection.
+  - [x] Add OpenRouter provider/model pass-through for Opencode without a
+    hardcoded Tango model catalog.
+  - [ ] Add first-class provider presets beyond OpenRouter when operators need
+    model/provider defaults that are not already handled by Opencode config.

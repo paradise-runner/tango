@@ -1,5 +1,6 @@
 import gleam/dict
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit/should
 import tango/config
 import tango/store/file
@@ -39,6 +40,58 @@ pub fn config_round_trips_minimal_toml_test() {
   |> config.encode
   |> config.parse
   |> should.equal(Ok(value))
+}
+
+pub fn parse_round_trips_opencode_openrouter_agent_config_test() {
+  let source =
+    "[state]\n"
+    <> "dir = \"/tmp/tango\"\n\n"
+    <> "[agent]\n"
+    <> "runtime = \"opencode\"\n\n"
+    <> "[agent.codex]\n"
+    <> "command = \"codex\"\n"
+    <> "transport = \"exec\"\n"
+    <> "default_model = \"\"\n\n"
+    <> "[agent.opencode]\n"
+    <> "command = \"opencode\"\n"
+    <> "provider = \"openrouter\"\n"
+    <> "default_model = \"anthropic/claude-sonnet-4-5\"\n\n"
+    <> "[workspace.aicasa]\n"
+    <> "command = \"casa\"\n"
+    <> "root = \"/tmp/tango/workspaces\"\n"
+
+  let assert Ok(parsed) = config.parse(source)
+  let encoded = config.encode(parsed)
+
+  encoded
+  |> string.contains("[agent]")
+  |> should.be_true()
+  encoded
+  |> string.contains("runtime = \"opencode\"")
+  |> should.be_true()
+  encoded
+  |> string.contains("[agent.opencode]")
+  |> should.be_true()
+  encoded
+  |> string.contains("provider = \"openrouter\"")
+  |> should.be_true()
+  encoded
+  |> string.contains("default_model = \"anthropic/claude-sonnet-4-5\"")
+  |> should.be_true()
+  config.parse(encoded)
+  |> should.equal(Ok(parsed))
+}
+
+pub fn parse_rejects_unknown_agent_runtime_test() {
+  config.parse(
+    "[state]\n"
+    <> "dir = \"/tmp/tango\"\n\n"
+    <> "[agent]\n"
+    <> "runtime = \"unknown\"\n",
+  )
+  |> should.equal(
+    Error(config.InvalidConfig("agent.runtime must be codex or opencode")),
+  )
 }
 
 fn statuses() {

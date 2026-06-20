@@ -11,6 +11,7 @@ import tango/attestation/configured as configured_attestation
 import tango/config
 import tango/git/adapter as git
 import tango/harness/codex
+import tango/harness/opencode
 import tango/log
 import tango/orchestrator
 import tango/review_watcher
@@ -41,9 +42,7 @@ pub fn start(runtime_config: config.Config) -> actor.StartResult(Runtime) {
       )),
       git: git.adapter("git"),
       attestation: configured_attestation.adapters(),
-      harness: codex.adapter(codex.CodexConfig(
-        command: runtime_config.agent_codex.command,
-      )),
+      harness: selected_harness(runtime_config),
     )
   let worker_supervisor_name = worker_supervisor.new_name()
   let store_server_name = store_server.new_name()
@@ -135,7 +134,7 @@ fn validate_runtime_commands(
       "workspace.aicasa.command",
       resolve_workspace_command(runtime_config.workspace_aicasa.command),
     ),
-    #("agent.codex.command", runtime_config.agent_codex.command),
+    agent_command(runtime_config),
   ]
   let registries =
     runtime_config.registries
@@ -159,6 +158,34 @@ fn validate_runtime_commands(
         <> render_missing_commands(missing)
         <> ". Run tango capability install for ticket-system/forge CLIs, or install/update the configured runtime command.",
       )
+  }
+}
+
+fn selected_harness(runtime_config: config.Config) {
+  case runtime_config.agent_runtime {
+    config.CodexRuntime ->
+      codex.adapter(codex.CodexConfig(
+        command: runtime_config.agent_codex.command,
+      ))
+    config.OpencodeRuntime ->
+      opencode.adapter(opencode.OpencodeConfig(
+        command: runtime_config.agent_opencode.command,
+        provider: runtime_config.agent_opencode.provider,
+        default_model: runtime_config.agent_opencode.default_model,
+      ))
+  }
+}
+
+fn agent_command(runtime_config: config.Config) -> #(String, String) {
+  case runtime_config.agent_runtime {
+    config.CodexRuntime -> #(
+      "agent.codex.command",
+      runtime_config.agent_codex.command,
+    )
+    config.OpencodeRuntime -> #(
+      "agent.opencode.command",
+      runtime_config.agent_opencode.command,
+    )
   }
 }
 

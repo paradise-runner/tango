@@ -37,7 +37,8 @@ Resolved initial decisions:
 - The agent creates pull requests and, after a human-only approval gate, owns pull-request merge execution.
 - Each task owns one main implementation session and an append-only array of auxiliary sessions for follow-up implementation, pull-request feedback, registry-status synchronization, and merge work.
 - Later requested implementation changes create a fresh auxiliary implementation session linked back to the main session through `context_session_ids`; pull-request feedback checks, registry-sync work, and merge work also use auxiliary sessions.
-- The initial Codex transport is `codex exec --json`.
+- The default Codex transport is `codex exec --json`; operators may select the
+  Opencode harness with OpenRouter model IDs through runtime config.
 - Prompts instruct agents to post progress and handoff comments back to external tickets through their capability profiles, but those comments are not lifecycle-gating evidence.
 - Only `tango review merge <ticket>` creates an approval decision, advances Human Review to Merging, and appends an auxiliary merge session.
 - Completed workspaces, workpads, artifacts, events, and usage history are retained indefinitely by default.
@@ -79,6 +80,7 @@ src/
   tango/harness/
     adapter.gleam
     codex.gleam
+    opencode.gleam
   tango/vcs/
     adapter.gleam
     git.gleam
@@ -542,7 +544,7 @@ Ticket content can replace task-specific workflow details, but it should not rep
 ## 10. Harness Adapter
 
 The harness adapter expresses the local process contract Tango needs from any
-coding harness. Codex is one implementation of `HarnessAdapter`.
+coding harness. Codex and Opencode are implementations of `HarnessAdapter`.
 
 Current interface:
 
@@ -552,7 +554,9 @@ pub type HarnessRequest {
     prompt: String,
     workspace_path: String,
     workpad_path: String,
+    sandbox_paths: List(String),
     resume_session_id: Option(String),
+    on_process_started: fn(Int) -> Nil,
   )
 }
 
@@ -561,6 +565,7 @@ pub type HarnessResponse {
     exit_code: Int,
     output: String,
     runtime_session_id: Option(String),
+    usage: Option(run.RunUsage),
   )
 }
 
@@ -569,7 +574,7 @@ pub type HarnessAdapter {
 }
 ```
 
-Codex-specific details should live in `tango/harness/codex.gleam`:
+Harness-specific details should live in the concrete adapter modules:
 
 - command discovery;
 - protocol selection;
@@ -579,7 +584,7 @@ Codex-specific details should live in `tango/harness/codex.gleam`:
 - token usage extraction;
 - final artifact extraction.
 
-Selected initial transport: `codex exec --json`.
+Default Codex transport: `codex exec --json`.
 
 The adapter launches each attempt with the inspected `casa` workspace as Codex's workspace root:
 
@@ -587,11 +592,25 @@ The adapter launches each attempt with the inspected `casa` workspace as Codex's
 codex exec --json --cd <ticket-workspace-path> --sandbox workspace-write <prompt>
 ```
 
-Runtime configuration must add only the exact run workpad as an additional
-writable root. Requested-changes implementation sessions, review-watch
-sessions, registry-sync sessions, and merge sessions all start independently
-with `codex exec`. Requested-changes sessions rely on `context_session_ids`
-and durable artifacts rather than runtime resume.
+Opencode uses the same Tango prompt and workpad contract through its
+non-interactive JSON stream:
+
+```text
+opencode run --dir <ticket-workspace-path> --format json --model openrouter/<model> --dangerously-skip-permissions <prompt>
+```
+
+Tango passes OpenRouter model IDs through runtime config rather than validating
+them against a static in-repository catalog. OpenCode remains responsible for
+loading provider/model data from its own Models.dev-backed configuration and
+credentials such as `OPENROUTER_API_KEY`.
+
+Codex runtime configuration must add only the exact run workpad as an additional
+writable root. Opencode receives the same absolute workpad path in the Tango
+prompt and relies on its own permission model for non-interactive runs.
+Requested-changes implementation sessions, review-watch sessions, registry-sync
+sessions, and merge sessions all start independently with the selected harness.
+Requested-changes sessions rely on `context_session_ids` and durable artifacts
+rather than runtime resume.
 
 | Concern | `codex exec` | `codex app-server` |
 | --- | --- | --- |
@@ -603,11 +622,12 @@ and durable artifacts rather than runtime resume.
 | Tango implementation cost | Lower | Higher |
 
 `codex exec --json` is stable and fits Tango's main-plus-auxiliary session
-model. The first execution attempt creates the task's main Codex session and
+model. Opencode's `run --format json` stream has the same process-per-attempt
+shape. The first execution attempt creates the task's main runtime session and
 records its runtime session ID. Each requested-changes implementation session,
 review-watch session, registry-sync session, and merge auxiliary session
-starts with a new `codex exec` invocation and records its own runtime session
-ID. Requested-changes implementation sessions include the main session ID and
+starts with a new selected-harness invocation and records its own runtime
+session ID. Requested-changes implementation sessions include the main session ID and
 any relevant prior implementation session IDs in `context_session_ids` so
 prompt assembly can point the agent at prior artifacts and external
 references.
@@ -880,9 +900,17 @@ id = "local-operator"
 poll_interval_ms = 30000
 max_concurrent_workers = 2
 
+[agent]
+runtime = "codex"
+
 [agent.codex]
 command = "codex"
 transport = "exec"
+default_model = ""
+
+[agent.opencode]
+command = "opencode"
+provider = "openrouter"
 default_model = ""
 
 [workspace.aicasa]
